@@ -168,6 +168,12 @@ Trunk (Unreleased)
     MAPREDUCE-4695. Fix LocalRunner on trunk after MAPREDUCE-3223 broke it
     (harsh)
 
+    MAPREDUCE-3914. Mismatched free() / delete / delete [] in HadoopPipes
+    (Joe Mudd via aw)
+
+    MAPREDUCE-1125. SerialUtils.cc: deserializeFloat is out of sync with
+    SerialUtils.hh (Simone Leo via aw)
+
     MAPREDUCE-4574. Fix TotalOrderParitioner to work with
     non-WritableComparable key types. (harsh)
 
@@ -219,6 +225,8 @@ Trunk (Unreleased)
 
     MAPREDUCE-6435. MapReduce client assumes the world is x86
     (Alan Burlison via aw)
+
+    MAPREDUCE-6540. TestMRTimelineEventHandling fails (sjlee)
 
   BREAKDOWN OF MAPREDUCE-2841 (NATIVE TASK) SUBTASKS
 
@@ -416,6 +424,9 @@ Release 2.8.0 - UNRELEASED
 
     MAPREDUCE-6489. Fail fast rogue tasks that write too much to local disk
     (Maysam Yabandeh via jlowe)
+
+    MAPREDUCE-5763. Warn message about httpshuffle in NM logs.
+    (Akira AJISAKA via ozawa)
 
   OPTIMIZATIONS
 
@@ -621,6 +632,21 @@ Release 2.8.0 - UNRELEASED
 
    MAPREDUCE-6515. Update Application priority in AM side from AM-RM heartbeat
    (Sunil G via jlowe)
+
+   MAPREDUCE-6533. testDetermineCacheVisibilities of
+   TestClientDistributedCacheManager is broken (Chang Li via jlowe)
+
+Release 2.7.3 - UNRELEASED
+
+  INCOMPATIBLE CHANGES
+
+  NEW FEATURES
+
+  IMPROVEMENTS
+
+  OPTIMIZATIONS
+
+  BUG FIXES
 
 Release 2.7.2 - UNRELEASED
 

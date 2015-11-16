@@ -67,6 +67,14 @@ public interface FsDatasetTestUtils {
     public boolean isSimulated() {
       return false;
     }
+
+    /**
+     * Get the default number of data directories for underlying storage per
+     * DataNode.
+     *
+     * @return The default number of data dirs per DataNode.
+     */
+    abstract public int getDefaultNumOfDataDirs();
   }
 
   /**
@@ -206,4 +214,22 @@ public interface FsDatasetTestUtils {
    * @throws IOException on I/O error.
    */
   void injectCorruptReplica(ExtendedBlock block) throws IOException;
+
+  /**
+   * Get the replica of a block. Returns null if it does not exist.
+   * @param block the block whose replica will be returned.
+   * @return Replica for the block.
+   */
+  Replica fetchReplica(ExtendedBlock block);
+
+  /**
+   * @return The default value of number of data dirs per DataNode in
+   * MiniDFSCluster.
+   */
+  int getDefaultNumOfDataDirs();
+
+  /**
+   * Obtain the raw capacity of underlying storage per DataNode.
+   */
+  long getRawCapacity() throws IOException;
 }
