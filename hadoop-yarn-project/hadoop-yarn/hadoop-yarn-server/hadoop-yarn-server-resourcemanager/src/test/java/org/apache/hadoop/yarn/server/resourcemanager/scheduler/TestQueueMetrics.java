@@ -87,6 +87,14 @@ public class TestQueueMetrics {
     metrics.releaseResources(user, 1, Resources.createResource(2*GB, 2));
     checkResources(queueSource, 4*GB, 4, 2, 3, 1, 100*GB, 100, 9*GB, 9, 2, 0, 0, 0);
 
+    metrics.incrPendingResources(user, 0, Resources.createResource(2 * GB, 2));
+    checkResources(queueSource, 4 * GB, 4, 2, 3, 1, 100 * GB, 100, 9 * GB, 9, 2,
+        0, 0, 0);
+
+    metrics.decrPendingResources(user, 0, Resources.createResource(2 * GB, 2));
+    checkResources(queueSource, 4 * GB, 4, 2, 3, 1, 100 * GB, 100, 9 * GB, 9, 2,
+        0, 0, 0);
+
     metrics.finishAppAttempt(
         app.getApplicationId(), app.isPending(), app.getUser());
     checkApps(queueSource, 1, 0, 0, 0, 0, 0, true);
@@ -393,10 +401,10 @@ public class TestQueueMetrics {
     assertCounter("AppsKilled", killed, rb);
   }
 
-  public static void checkResources(MetricsSource source, int allocatedMB,
-      int allocatedCores, int allocCtnrs, long aggreAllocCtnrs,
-      long aggreReleasedCtnrs, int availableMB, int availableCores, int pendingMB,
-      int pendingCores, int pendingCtnrs, int reservedMB, int reservedCores,
+  public static void checkResources(MetricsSource source, long allocatedMB,
+      long allocatedCores, int allocCtnrs, long aggreAllocCtnrs,
+      long aggreReleasedCtnrs, long availableMB, long availableCores, long pendingMB,
+      long pendingCores, int pendingCtnrs, long reservedMB, long reservedCores,
       int reservedCtnrs) {
     MetricsRecordBuilder rb = getMetrics(source);
     assertGauge("AllocatedMB", allocatedMB, rb);

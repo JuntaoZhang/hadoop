@@ -88,6 +88,7 @@ public class TestDFSClientFailover {
   public void tearDownCluster() throws IOException {
     if (cluster != null) {
       cluster.shutdown();
+      cluster = null;
     }
   }
 
@@ -311,7 +312,7 @@ public class TestDFSClientFailover {
     conf.set(DFSConfigKeys.DFS_HA_NAMENODES_KEY_PREFIX + "." + service,
         namenode);
     conf.set(DFSConfigKeys.DFS_NAMENODE_RPC_ADDRESS_KEY + "." + service + "."
-        + namenode, "localhost:8020");
+        + namenode, "localhost:9820");
 
     // call createProxy implicitly and explicitly
     Path p = new Path("/");

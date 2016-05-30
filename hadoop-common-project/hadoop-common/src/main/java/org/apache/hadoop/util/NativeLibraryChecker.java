@@ -146,7 +146,7 @@ public class NativeLibraryChecker {
     }
 
     if ((!nativeHadoopLoaded) || (Shell.WINDOWS && (!winutilsExists)) ||
-        (checkAll && !(zlibLoaded && snappyLoaded && lz4Loaded && bzip2Loaded))) {
+        (checkAll && !(zlibLoaded && snappyLoaded && lz4Loaded && bzip2Loaded && isalLoaded))) {
       // return 1 to indicated check failed
       ExitUtil.terminate(1);
     }

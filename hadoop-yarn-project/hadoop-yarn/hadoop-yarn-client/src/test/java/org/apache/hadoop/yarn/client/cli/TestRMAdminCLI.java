@@ -36,7 +36,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.ha.HAServiceProtocol;
@@ -145,7 +147,20 @@ public class TestRMAdminCLI {
   private void initDummyNodeLabelsManager() {
     Configuration conf = new YarnConfiguration();
     conf.setBoolean(YarnConfiguration.NODE_LABELS_ENABLED, true);
-    dummyNodeLabelsManager = new DummyCommonNodeLabelsManager();
+    dummyNodeLabelsManager = new DummyCommonNodeLabelsManager() {
+      @Override
+      public void replaceLabelsOnNode(
+          Map<NodeId, Set<String>> replaceLabelsToNode) throws IOException {
+        Iterator<NodeId> iterator = replaceLabelsToNode.keySet().iterator();
+        while(iterator.hasNext()) {
+          NodeId nodeId=iterator.next();
+          if(nodeId.getHost().endsWith("=")){
+            throw new IOException("Parsing of Input String failed");
+          }
+        }
+        super.replaceLabelsOnNode(replaceLabelsToNode);
+      }
+    };
     dummyNodeLabelsManager.init(conf);
   }
   
@@ -216,6 +231,20 @@ public class TestRMAdminCLI {
         ResourceOption.newInstance(expectedResource,
             ResourceOption.OVER_COMMIT_TIMEOUT_MILLIS_DEFAULT),
         resource);
+  }
+
+  @Test(timeout=500)
+  public void testUpdateNodeResourceWithInvalidValue() throws Exception {
+    String nodeIdStr = "0.0.0.0:0";
+    int memSize = -2048;
+    int cores = 2;
+    String[] args = { "-updateNodeResource", nodeIdStr,
+        Integer.toString(memSize), Integer.toString(cores) };
+    // execution of command line is expected to be failed
+    assertEquals(-1, rmAdminCLI.run(args));
+    // verify admin protocol never calls. 
+    verify(admin,times(0)).updateNodeResource(
+        any(UpdateNodeResourceRequest.class));
   }
 
   @Test(timeout=500)
@@ -383,7 +412,7 @@ public class TestRMAdminCLI {
               "[-removeFromClusterNodeLabels <label1,label2,label3>] " +
               "[-replaceLabelsOnNode " +
               "<\"node1[:port]=label1,label2 node2[:port]=label1\">] " +
-              "[-directlyAccessNodeLabelStore]] [-updateNodeResource " +
+              "[-directlyAccessNodeLabelStore] [-updateNodeResource " +
               "[NodeID] [MemSize] [vCores] ([OvercommitTimeout]) " +
               "[-help [cmd]]"));
       assertTrue(dataOut
@@ -473,7 +502,7 @@ public class TestRMAdminCLI {
               + " [username]] [-addToClusterNodeLabels <\"label1(exclusive=true),"
                   + "label2(exclusive=false),label3\">]"
               + " [-removeFromClusterNodeLabels <label1,label2,label3>] [-replaceLabelsOnNode "
-              + "<\"node1[:port]=label1,label2 node2[:port]=label1\">] [-directlyAccessNodeLabelStore]] "
+              + "<\"node1[:port]=label1,label2 node2[:port]=label1\">] [-directlyAccessNodeLabelStore] "
               + "[-updateNodeResource [NodeID] [MemSize] [vCores] ([OvercommitTimeout]) "
               + "[-transitionToActive [--forceactive] <serviceId>] "
               + "[-transitionToStandby <serviceId>] "
@@ -696,6 +725,21 @@ public class TestRMAdminCLI {
         { "-replaceLabelsOnNode", "node1,x,y",
             "-directlyAccessNodeLabelStore" };
     assertTrue(0 != rmAdminCLI.run(args));
+  }
+
+  @Test
+  public void testRemoveLabelsOnNodes() throws Exception {
+    // Successfully replace labels
+    dummyNodeLabelsManager
+        .addToCluserNodeLabelsWithDefaultExclusivity(ImmutableSet.of("x", "y"));
+    String[] args = { "-replaceLabelsOnNode", "node1=x node2=y",
+        "-directlyAccessNodeLabelStore" };
+    assertTrue(0 == rmAdminCLI.run(args));
+
+    args = new String[] { "-replaceLabelsOnNode", "node1= node2=",
+        "-directlyAccessNodeLabelStore" };
+    assertTrue("Labels should get replaced even '=' is used ",
+        0 == rmAdminCLI.run(args));
   }
 
   private void testError(String[] args, String template,

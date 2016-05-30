@@ -20,7 +20,7 @@ package org.apache.hadoop.hdfs.server.namenode.ha;
 import static org.apache.hadoop.fs.CommonConfigurationKeys.HA_HM_RPC_TIMEOUT_DEFAULT;
 import static org.apache.hadoop.fs.CommonConfigurationKeys.HA_HM_RPC_TIMEOUT_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_LIFELINE_RPC_ADDRESS_KEY;
-import static org.junit.Assert.fail;
+import static org.junit.Assert.*;
 
 import java.io.IOException;
 
@@ -53,6 +53,7 @@ public class TestNNHealthCheck {
   public void shutdown() {
     if (cluster != null) {
       cluster.shutdown();
+      cluster = null;
     }
   }
 
@@ -84,6 +85,16 @@ public class TestNNHealthCheck {
 
     NNHAServiceTarget haTarget = new NNHAServiceTarget(conf,
         DFSUtil.getNamenodeNameServiceId(conf), "nn1");
+    final String expectedTargetString;
+    if (conf.get(DFS_NAMENODE_LIFELINE_RPC_ADDRESS_KEY + "." +
+        DFSUtil.getNamenodeNameServiceId(conf) + ".nn1") != null) {
+      expectedTargetString = haTarget.getHealthMonitorAddress().toString();
+    } else {
+      expectedTargetString = haTarget.getAddress().toString();
+    }
+    assertTrue("Expected haTarget " + haTarget + " containing " +
+        expectedTargetString,
+        haTarget.toString().contains(expectedTargetString));
     HAServiceProtocol rpc = haTarget.getHealthMonitorProxy(conf, conf.getInt(
         HA_HM_RPC_TIMEOUT_KEY, HA_HM_RPC_TIMEOUT_DEFAULT));
 

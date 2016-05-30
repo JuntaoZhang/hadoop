@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -49,6 +50,7 @@ import org.apache.hadoop.hdfs.server.blockmanagement.BlockPlacementPolicyDefault
 import org.apache.hadoop.hdfs.server.blockmanagement.DatanodeStorageInfo;
 import org.apache.hadoop.hdfs.server.datanode.DataNode;
 import org.apache.hadoop.hdfs.server.datanode.DataNodeTestUtils;
+import org.apache.hadoop.hdfs.server.datanode.InternalDataNodeTestUtils;
 import org.apache.hadoop.hdfs.server.namenode.NameNode;
 import org.apache.hadoop.hdfs.server.namenode.NameNodeAdapter;
 import org.apache.hadoop.hdfs.server.protocol.BlockReportContext;
@@ -117,6 +119,7 @@ public class TestDNFencing {
       banner("Shutting down cluster. NN2 metadata:");
       doMetasave(nn2);
       cluster.shutdown();
+      cluster = null;
     }
   }
   
@@ -294,7 +297,7 @@ public class TestDNFencing {
       LOG.info("Getting more replication work computed");
     }
     BlockManager bm1 = nn1.getNamesystem().getBlockManager();
-    while (bm1.getPendingReplicationBlocksCount() > 0) {
+    while (bm1.getPendingReconstructionBlocksCount() > 0) {
       BlockManagerTestUtil.updateState(bm1);
       cluster.triggerHeartbeats();
       Thread.sleep(1000);
@@ -456,6 +459,7 @@ public class TestDNFencing {
       numQueued += numDN * 2; // RBW messages, see comments in case 1
     } finally {
       IOUtils.closeStream(out);
+      cluster.triggerHeartbeats();
       numQueued += numDN; // blockReceived
     }
     assertEquals(numQueued, cluster.getNameNode(1).getNamesystem().
@@ -536,8 +540,8 @@ public class TestDNFencing {
 
       DataNode dn = cluster.getDataNodes().get(0);
       DatanodeProtocolClientSideTranslatorPB spy =
-        DataNodeTestUtils.spyOnBposToNN(dn, nn2);
-      
+        InternalDataNodeTestUtils.spyOnBposToNN(dn, nn2);
+
       Mockito.doAnswer(delayer)
         .when(spy).blockReport(
           Mockito.<DatanodeRegistration>anyObject(),
@@ -632,7 +636,8 @@ public class TestDNFencing {
     public DatanodeStorageInfo chooseReplicaToDelete(
         Collection<DatanodeStorageInfo> moreThanOne,
         Collection<DatanodeStorageInfo> exactlyOne,
-        List<StorageType> excessTypes) {
+        List<StorageType> excessTypes,
+        Map<String, List<DatanodeStorageInfo>> rackMap) {
 
       Collection<DatanodeStorageInfo> chooseFrom = !moreThanOne.isEmpty() ?
           moreThanOne : exactlyOne;

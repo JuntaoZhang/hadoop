@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
+import org.apache.hadoop.security.alias.AbstractJavaKeyStoreProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -185,8 +186,23 @@ public abstract class Shell {
     //'groups username' command return is inconsistent across different unixes
     return WINDOWS ?
       new String[]
-          { getWinUtilsPath(), "groups", "-F", "\"" + user + "\"" }
-      : new String [] {"bash", "-c", "id -gn " + user + "&& id -Gn " + user};
+          {getWinUtilsPath(), "groups", "-F", "\"" + user + "\""}
+      : new String[] {"bash", "-c", "id -gn " + user + "; id -Gn " + user};
+  }
+
+  /**
+   * A command to get a given user's group id list.
+   * The command will get the user's primary group
+   * first and finally get the groups list which includes the primary group.
+   * i.e. the user's primary group will be included twice.
+   * This command does not support Windows and will only return group names.
+   */
+  public static String[] getGroupsIDForUserCommand(final String user) {
+    //'groups username' command return is inconsistent across different unixes
+    return WINDOWS ?
+        new String[]
+            {getWinUtilsPath(), "groups", "-F", "\"" + user + "\""}
+        : new String[] {"bash", "-c", "id -g " + user + "; id -G " + user};
   }
 
   /** A command to get a given netgroup's user list. */
@@ -346,6 +362,9 @@ public abstract class Shell {
   protected long timeOutInterval = 0L;
   /** If or not script timed out*/
   private final AtomicBoolean timedOut = new AtomicBoolean(false);
+
+  /** Indicates if the parent env vars should be inherited or not*/
+  protected boolean inheritParentEnv = true;
 
   /**
    *  Centralized logic to discover and validate the sanity of the Hadoop
@@ -702,6 +721,10 @@ public abstract class Shell {
     } catch (IOException ioe) {
       LOG.warn("Bash is not supported by the OS", ioe);
       supported = false;
+    } catch (SecurityException se) {
+      LOG.info("Bash execution is not allowed by the JVM " +
+          "security manager.Considering it not supported.");
+      supported = false;
     }
 
     return supported;
@@ -729,7 +752,11 @@ public abstract class Shell {
     } catch (IOException ioe) {
       LOG.debug("setsid is not available on this machine. So not using it.");
       setsidSupported = false;
-    }  catch (Error err) {
+    } catch (SecurityException se) {
+      LOG.debug("setsid is not allowed to run by the JVM "+
+          "security manager. So not using it.");
+      setsidSupported = false;
+    } catch (Error err) {
       if (err.getMessage() != null
           && err.getMessage().contains("posix_spawn is not " +
           "a supported process launch mechanism")
@@ -831,9 +858,16 @@ public abstract class Shell {
     timedOut.set(false);
     completed.set(false);
 
+    // Remove all env vars from the Builder to prevent leaking of env vars from
+    // the parent process.
+    if (!inheritParentEnv) {
+      builder.environment().clear();
+    }
+
     if (environment != null) {
       builder.environment().putAll(this.environment);
     }
+
     if (dir != null) {
       builder.directory(this.dir);
     }
@@ -1061,6 +1095,11 @@ public abstract class Shell {
       this(execString, dir, env , 0L);
     }
 
+    public ShellCommandExecutor(String[] execString, File dir,
+                                Map<String, String> env, long timeout) {
+      this(execString, dir, env , timeout, true);
+    }
+
     /**
      * Create a new instance of the ShellCommandExecutor to execute a command.
      * 
@@ -1073,10 +1112,12 @@ public abstract class Shell {
      *            environment is not modified.
      * @param timeout Specifies the time in milliseconds, after which the
      *                command will be killed and the status marked as timed-out.
-     *                If 0, the command will not be timed out. 
+     *                If 0, the command will not be timed out.
+     * @param inheritParentEnv Indicates if the process should inherit the env
+     *                         vars from the parent process or not.
      */
     public ShellCommandExecutor(String[] execString, File dir, 
-        Map<String, String> env, long timeout) {
+        Map<String, String> env, long timeout, boolean inheritParentEnv) {
       command = execString.clone();
       if (dir != null) {
         setWorkingDirectory(dir);
@@ -1085,6 +1126,7 @@ public abstract class Shell {
         setEnvironment(env);
       }
       timeOutInterval = timeout;
+      this.inheritParentEnv = inheritParentEnv;
     }
 
     /**

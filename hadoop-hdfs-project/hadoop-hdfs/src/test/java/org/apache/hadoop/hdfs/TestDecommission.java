@@ -114,7 +114,7 @@ public class TestDecommission {
     conf.setInt(DFSConfigKeys.DFS_HEARTBEAT_INTERVAL_KEY, HEARTBEAT_INTERVAL);
     conf.setInt(DFSConfigKeys.DFS_NAMENODE_REPLICATION_INTERVAL_KEY, 1);
     conf.setInt(DFSConfigKeys.DFS_BLOCKREPORT_INTERVAL_MSEC_KEY, BLOCKREPORT_INTERVAL_MSEC);
-    conf.setInt(DFSConfigKeys.DFS_NAMENODE_REPLICATION_PENDING_TIMEOUT_SEC_KEY, 4);
+    conf.setInt(DFSConfigKeys.DFS_NAMENODE_RECONSTRUCTION_PENDING_TIMEOUT_SEC_KEY, 4);
     conf.setInt(DFSConfigKeys.DFS_NAMENODE_REPLICATION_INTERVAL_KEY, NAMENODE_REPLICATION_INTERVAL);
   
     writeConfigFile(hostsFile, null);
@@ -126,6 +126,7 @@ public class TestDecommission {
     cleanupFile(localFileSys, dir);
     if (cluster != null) {
       cluster.shutdown();
+      cluster = null;
     }
   }
   
@@ -920,6 +921,41 @@ public class TestDecommission {
     // are allowed to register with the namenode
     cluster.shutdown();
     startCluster(numNamenodes, numDatanodes, conf);
+    cluster.shutdown();
+  }
+
+  /**
+   * Tests dead node count after restart of namenode
+   **/
+  @Test(timeout=360000)
+  public void testDeadNodeCountAfterNamenodeRestart()throws Exception {
+    LOG.info("Starting test testDeadNodeCountAfterNamenodeRestart");
+    int numNamenodes = 1;
+    int numDatanodes = 2;
+
+    startCluster(numNamenodes, numDatanodes, conf);
+
+    DFSClient client = getDfsClient(cluster.getNameNode(), conf);
+    DatanodeInfo[] info = client.datanodeReport(DatanodeReportType.LIVE);
+    DatanodeInfo excludedDatanode = info[0];
+    String excludedDatanodeName = info[0].getXferAddr();
+
+    writeConfigFile(hostsFile, new ArrayList<String>(Arrays.asList(
+        excludedDatanodeName, info[1].getXferAddr())));
+    decommissionNode(0, excludedDatanode.getDatanodeUuid(), null,
+        AdminStates.DECOMMISSIONED);
+
+    cluster.stopDataNode(excludedDatanodeName);
+    DFSTestUtil.waitForDatanodeState(
+        cluster, excludedDatanode.getDatanodeUuid(), false, 20000);
+
+    //Restart the namenode
+    cluster.restartNameNode();
+
+    assertEquals("There should be one node alive", 1,
+        client.datanodeReport(DatanodeReportType.LIVE).length);
+    assertEquals("There should be one node dead", 1,
+        client.datanodeReport(DatanodeReportType.DEAD).length);
     cluster.shutdown();
   }
 

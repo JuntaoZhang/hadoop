@@ -531,7 +531,7 @@ public class TestJobImpl {
     Configuration conf = new Configuration();
     conf.set(MRJobConfig.MR_AM_STAGING_DIR, stagingDir);
     conf.setInt(MRJobConfig.NUM_REDUCES, 1);
-    AsyncDispatcher dispatcher = new AsyncDispatcher();
+    DrainDispatcher dispatcher = new DrainDispatcher();
     dispatcher.init(conf);
     dispatcher.start();
     CyclicBarrier syncBarrier = new CyclicBarrier(2);
@@ -608,6 +608,7 @@ public class TestJobImpl {
     NodeReport secondMapperNodeReport = nodeReports.get(1);
     job.handle(new JobUpdatedNodesEvent(job.getID(),
         Collections.singletonList(firstMapperNodeReport)));
+    dispatcher.await();
     // complete the reducer
     for (TaskId taskId: job.tasks.keySet()) {
       if (taskId.getTaskType() == TaskType.REDUCE) {
@@ -723,7 +724,7 @@ public class TestJobImpl {
         .newRecord(ApplicationAttemptId.class), new Configuration(),
         mock(EventHandler.class),
         null, mock(JobTokenSecretManager.class), null,
-        new SystemClock(), null,
+        SystemClock.getInstance(), null,
         mrAppMetrics, null, true, null, 0, null, mockContext, null, null);
     job.handle(diagUpdateEvent);
     String diagnostics = job.getReport().getDiagnostics();
@@ -734,7 +735,7 @@ public class TestJobImpl {
         .newRecord(ApplicationAttemptId.class), new Configuration(),
         mock(EventHandler.class),
         null, mock(JobTokenSecretManager.class), null,
-        new SystemClock(), null,
+        SystemClock.getInstance(), null,
         mrAppMetrics, null, true, null, 0, null, mockContext, null, null);
     job.handle(new JobEvent(jobId, JobEventType.JOB_KILL));
     job.handle(diagUpdateEvent);
@@ -914,7 +915,7 @@ public class TestJobImpl {
     assertJobState(job, JobStateInternal.RUNNING);
 
     // Update priority of job to 8, and see whether its updated
-    Priority updatedPriority = Priority.newInstance(5);
+    Priority updatedPriority = Priority.newInstance(8);
     job.setJobPriority(updatedPriority);
     assertJobState(job, JobStateInternal.RUNNING);
     Priority jobPriority = job.getReport().getJobPriority();
@@ -926,7 +927,7 @@ public class TestJobImpl {
 
   private static CommitterEventHandler createCommitterEventHandler(
       Dispatcher dispatcher, OutputCommitter committer) {
-    final SystemClock clock = new SystemClock();
+    final SystemClock clock = SystemClock.getInstance();
     AppContext appContext = mock(AppContext.class);
     when(appContext.getEventHandler()).thenReturn(
         dispatcher.getEventHandler());
@@ -1105,7 +1106,7 @@ public class TestJobImpl {
         String user, int numSplits, AppContext appContext) {
       super(jobId, applicationAttemptId, conf, eventHandler,
           null, new JobTokenSecretManager(), new Credentials(),
-          new SystemClock(), Collections.<TaskId, TaskInfo> emptyMap(),
+          SystemClock.getInstance(), Collections.<TaskId, TaskInfo> emptyMap(),
           MRAppMetrics.create(), null, newApiCommitter, user,
           System.currentTimeMillis(), null, appContext, null, null);
 

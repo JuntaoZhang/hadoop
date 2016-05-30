@@ -27,7 +27,9 @@ import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.NodeId;
 import org.apache.hadoop.yarn.api.records.NodeState;
 import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.api.records.ResourceUtilization;
 import org.apache.hadoop.yarn.server.api.protocolrecords.NodeHeartbeatResponse;
+import org.apache.hadoop.yarn.server.api.records.QueuedContainersStatus;
 import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.RMNodeLabelsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode
@@ -171,9 +173,33 @@ public class RMNodeWrapper implements RMNode {
     // TODO Auto-generated method stub
   }
 
+  @SuppressWarnings("unchecked")
   @Override
   public List<Container> pullNewlyIncreasedContainers() {
     // TODO Auto-generated method stub
+    return Collections.EMPTY_LIST;
+  }
+
+  public QueuedContainersStatus getQueuedContainersStatus() {
     return null;
+  }
+
+  @Override
+  public ResourceUtilization getAggregatedContainersUtilization() {
+    return node.getAggregatedContainersUtilization();
+  }
+
+  @Override
+  public ResourceUtilization getNodeUtilization() {
+    return node.getNodeUtilization();
+  }
+
+  @Override
+  public long getUntrackedTimeStamp() {
+    return 0;
+  }
+
+  @Override
+  public void setUntrackedTimeStamp(long timeStamp) {
   }
 }

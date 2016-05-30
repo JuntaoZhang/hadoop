@@ -559,6 +559,37 @@ public class TestDFSShell {
     }
   }
 
+  @Test
+  public void testMoveWithTargetPortEmpty() throws Exception {
+    Configuration conf = new HdfsConfiguration();
+    MiniDFSCluster cluster = null;
+    try {
+      cluster = new MiniDFSCluster.Builder(conf)
+          .format(true)
+          .numDataNodes(2)
+          .nameNodePort(HdfsClientConfigKeys.DFS_NAMENODE_RPC_PORT_DEFAULT)
+          .waitSafeMode(true)
+          .build();
+      FileSystem srcFs = cluster.getFileSystem();
+      FsShell shell = new FsShell();
+      shell.setConf(conf);
+      String[] argv = new String[2];
+      argv[0] = "-mkdir";
+      argv[1] = "/testfile";
+      ToolRunner.run(shell, argv);
+      argv = new String[3];
+      argv[0] = "-mv";
+      argv[1] = srcFs.getUri() + "/testfile";
+      argv[2] = "hdfs://localhost/testfile2";
+      int ret = ToolRunner.run(shell, argv);
+      assertEquals("mv should have succeeded", 0, ret);
+    } finally {
+      if (cluster != null) {
+        cluster.shutdown();
+      }
+    }
+  }
+
   @Test (timeout = 30000)
   public void testURIPaths() throws Exception {
     Configuration srcConf = new HdfsConfiguration();
@@ -3344,7 +3375,7 @@ public class TestDFSShell {
       fs.createSnapshot(reserved, "snap");
       fail("Can't create snapshot on /.reserved");
     } catch (FileNotFoundException e) {
-      assertTrue(e.getMessage().contains("Directory does not exist"));
+      assertTrue(e.getMessage().contains("Directory/File does not exist"));
     }
     cluster.shutdown();
   }

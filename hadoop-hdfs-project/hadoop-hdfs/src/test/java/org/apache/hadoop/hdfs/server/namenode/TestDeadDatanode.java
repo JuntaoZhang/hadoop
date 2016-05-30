@@ -37,7 +37,7 @@ import org.apache.hadoop.hdfs.server.blockmanagement.BlockManager;
 import org.apache.hadoop.hdfs.server.blockmanagement.DatanodeManager;
 import org.apache.hadoop.hdfs.server.blockmanagement.DatanodeStorageInfo;
 import org.apache.hadoop.hdfs.server.datanode.DataNode;
-import org.apache.hadoop.hdfs.server.datanode.DataNodeTestUtils;
+import org.apache.hadoop.hdfs.server.datanode.InternalDataNodeTestUtils;
 import org.apache.hadoop.hdfs.server.protocol.BlockReportContext;
 import org.apache.hadoop.hdfs.server.protocol.DatanodeCommand;
 import org.apache.hadoop.hdfs.server.protocol.DatanodeProtocol;
@@ -62,7 +62,10 @@ public class TestDeadDatanode {
 
   @After
   public void cleanup() {
-    cluster.shutdown();
+    if (cluster != null) {
+      cluster.shutdown();
+      cluster = null;
+    }
   }
 
   /**
@@ -83,9 +86,9 @@ public class TestDeadDatanode {
     String poolId = cluster.getNamesystem().getBlockPoolId();
     // wait for datanode to be marked live
     DataNode dn = cluster.getDataNodes().get(0);
-    DatanodeRegistration reg = 
-      DataNodeTestUtils.getDNRegistrationForBP(cluster.getDataNodes().get(0), poolId);
-      
+    DatanodeRegistration reg = InternalDataNodeTestUtils.
+      getDNRegistrationForBP(cluster.getDataNodes().get(0), poolId);
+
     DFSTestUtil.waitForDatanodeState(cluster, reg.getDatanodeUuid(), true, 20000);
 
     // Shutdown and wait for datanode to be marked dead
@@ -100,14 +103,14 @@ public class TestDeadDatanode {
         null) };
     StorageReceivedDeletedBlocks[] storageBlocks = { 
         new StorageReceivedDeletedBlocks(reg.getDatanodeUuid(), blocks) };
-    
-    // Ensure blockReceived call from dead datanode is rejected with IOException
-    try {
-      dnp.blockReceivedAndDeleted(reg, poolId, storageBlocks);
-      fail("Expected IOException is not thrown");
-    } catch (IOException ex) {
-      // Expected
-    }
+
+    // Ensure blockReceived call from dead datanode is not rejected with
+    // IOException, since it's async, but the node remains unregistered.
+    dnp.blockReceivedAndDeleted(reg, poolId, storageBlocks);
+    BlockManager bm = cluster.getNamesystem().getBlockManager();
+    // IBRs are async, make sure the NN processes all of them.
+    bm.flushBlockOps();
+    assertFalse(bm.getDatanodeManager().getDatanode(reg).isRegistered());
 
     // Ensure blockReport from dead datanode is rejected with IOException
     StorageBlockReport[] report = { new StorageBlockReport(
@@ -115,7 +118,7 @@ public class TestDeadDatanode {
         BlockListAsLongs.EMPTY) };
     try {
       dnp.blockReport(reg, poolId, report,
-          new BlockReportContext(1, 0, System.nanoTime(), 0L));
+          new BlockReportContext(1, 0, System.nanoTime(), 0L, true));
       fail("Expected IOException is not thrown");
     } catch (IOException ex) {
       // Expected
@@ -144,8 +147,8 @@ public class TestDeadDatanode {
     String poolId = cluster.getNamesystem().getBlockPoolId();
     // wait for datanode to be marked live
     DataNode dn = cluster.getDataNodes().get(0);
-    DatanodeRegistration reg = DataNodeTestUtils.getDNRegistrationForBP(cluster
-        .getDataNodes().get(0), poolId);
+    DatanodeRegistration reg = InternalDataNodeTestUtils.
+        getDNRegistrationForBP(cluster.getDataNodes().get(0), poolId);
     // Get the updated datanode descriptor
     BlockManager bm = cluster.getNamesystem().getBlockManager();
     DatanodeManager dm = bm.getDatanodeManager();
@@ -163,7 +166,7 @@ public class TestDeadDatanode {
     // part of the cluster anymore
     DatanodeStorageInfo[] results = bm.chooseTarget4NewBlock("/hello", 3,
         clientNode, new HashSet<Node>(), 256 * 1024 * 1024L, null, (byte) 7,
-        false);
+        false, null);
     for (DatanodeStorageInfo datanodeStorageInfo : results) {
       assertFalse("Dead node should not be choosen", datanodeStorageInfo
           .getDatanodeDescriptor().equals(clientNode));

@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.hadoop.ipc.CallerContext;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
@@ -105,13 +106,15 @@ public class TestSystemMetricsPublisher {
 
   @Test(timeout = 10000)
   public void testPublishApplicationMetrics() throws Exception {
+    long stateUpdateTimeStamp = System.currentTimeMillis();
     for (int i = 1; i <= 2; ++i) {
       ApplicationId appId = ApplicationId.newInstance(0, i);
       RMApp app = createRMApp(appId);
       metricsPublisher.appCreated(app, app.getStartTime());
       if (i == 1) {
         when(app.getQueue()).thenReturn("new test queue");
-        ApplicationSubmissionContext asc = mock(ApplicationSubmissionContext.class);
+        ApplicationSubmissionContext asc = mock(
+            ApplicationSubmissionContext.class);
         when(asc.getUnmanagedAM()).thenReturn(false);
         when(asc.getPriority()).thenReturn(Priority.newInstance(1));
         when(asc.getNodeLabelExpression()).thenReturn("high-cpu");
@@ -120,7 +123,10 @@ public class TestSystemMetricsPublisher {
       } else {
         metricsPublisher.appUpdated(app, 4L);
       }
-      metricsPublisher.appFinished(app, RMAppState.FINISHED, app.getFinishTime());
+      metricsPublisher.appStateUpdated(app, YarnApplicationState.RUNNING,
+          stateUpdateTimeStamp);
+      metricsPublisher.appFinished(app, RMAppState.FINISHED,
+          app.getFinishTime());
       if (i == 1) {
         metricsPublisher.appACLsUpdated(app, "uers1,user2", 4L);
       } else {
@@ -133,8 +139,8 @@ public class TestSystemMetricsPublisher {
             store.getEntity(appId.toString(),
                 ApplicationMetricsConstants.ENTITY_TYPE,
                 EnumSet.allOf(Field.class));
-        // ensure three events are both published before leaving the loop
-      } while (entity == null || entity.getEvents().size() < 4);
+        // ensure Five events are both published before leaving the loop
+      } while (entity == null || entity.getEvents().size() < 5);
       // verify all the fields
       Assert.assertEquals(ApplicationMetricsConstants.ENTITY_TYPE,
           entity.getEntityType());
@@ -205,10 +211,13 @@ public class TestSystemMetricsPublisher {
             Long.parseLong(entity.getOtherInfo()
                 .get(ApplicationMetricsConstants.APP_CPU_METRICS).toString()));
       }
+      Assert.assertEquals("context", entity.getOtherInfo()
+          .get(ApplicationMetricsConstants.YARN_APP_CALLER_CONTEXT));
       boolean hasCreatedEvent = false;
       boolean hasUpdatedEvent = false;
       boolean hasFinishedEvent = false;
       boolean hasACLsUpdatedEvent = false;
+      boolean hasStateUpdateEvent = false;
       for (TimelineEvent event : entity.getEvents()) {
         if (event.getEventType().equals(
             ApplicationMetricsConstants.CREATED_EVENT_TYPE)) {
@@ -246,18 +255,49 @@ public class TestSystemMetricsPublisher {
             ApplicationMetricsConstants.ACLS_UPDATED_EVENT_TYPE)) {
           hasACLsUpdatedEvent = true;
           Assert.assertEquals(4L, event.getTimestamp());
+        } else if (event.getEventType().equals(
+              ApplicationMetricsConstants.STATE_UPDATED_EVENT_TYPE)) {
+          hasStateUpdateEvent = true;
+          Assert.assertEquals(event.getTimestamp(), stateUpdateTimeStamp);
+          Assert.assertEquals(YarnApplicationState.RUNNING.toString(), event
+              .getEventInfo().get(
+                   ApplicationMetricsConstants.STATE_EVENT_INFO));
         }
       }
-      Assert.assertTrue(hasCreatedEvent && hasFinishedEvent
-          && hasACLsUpdatedEvent && hasUpdatedEvent);
+      // Do assertTrue verification separately for easier debug
+      Assert.assertTrue(hasCreatedEvent);
+      Assert.assertTrue(hasFinishedEvent);
+      Assert.assertTrue(hasACLsUpdatedEvent);
+      Assert.assertTrue(hasUpdatedEvent);
+      Assert.assertTrue(hasStateUpdateEvent);
     }
+  }
+
+  @Test(timeout = 10000)
+  public void testPublishAppAttemptMetricsForUnmanagedAM() throws Exception {
+    ApplicationAttemptId appAttemptId =
+        ApplicationAttemptId.newInstance(ApplicationId.newInstance(0, 1), 1);
+    RMAppAttempt appAttempt = createRMAppAttempt(appAttemptId,true);
+    metricsPublisher.appAttemptRegistered(appAttempt, Integer.MAX_VALUE + 1L);
+    RMApp app = mock(RMApp.class);
+    when(app.getFinalApplicationStatus()).thenReturn(FinalApplicationStatus.UNDEFINED);
+    metricsPublisher.appAttemptFinished(appAttempt, RMAppAttemptState.FINISHED, app,
+        Integer.MAX_VALUE + 2L);
+    TimelineEntity entity = null;
+    do {
+      entity =
+          store.getEntity(appAttemptId.toString(),
+              AppAttemptMetricsConstants.ENTITY_TYPE,
+              EnumSet.allOf(Field.class));
+      // ensure two events are both published before leaving the loop
+    } while (entity == null || entity.getEvents().size() < 2);
   }
 
   @Test(timeout = 10000)
   public void testPublishAppAttemptMetrics() throws Exception {
     ApplicationAttemptId appAttemptId =
         ApplicationAttemptId.newInstance(ApplicationId.newInstance(0, 1), 1);
-    RMAppAttempt appAttempt = createRMAppAttempt(appAttemptId);
+    RMAppAttempt appAttempt = createRMAppAttempt(appAttemptId, false);
     metricsPublisher.appAttemptRegistered(appAttempt, Integer.MAX_VALUE + 1L);
     RMApp app = mock(RMApp.class);
     when(app.getFinalApplicationStatus()).thenReturn(FinalApplicationStatus.UNDEFINED);
@@ -322,6 +362,36 @@ public class TestSystemMetricsPublisher {
   }
 
   @Test(timeout = 10000)
+  public void testPublishHostPortInfoOnContainerFinished() throws Exception {
+    ContainerId containerId =
+        ContainerId.newContainerId(ApplicationAttemptId.newInstance(
+            ApplicationId.newInstance(0, 1), 1), 1);
+    RMContainer container = createRMContainer(containerId);
+    metricsPublisher.containerFinished(container, container.getFinishTime());
+    TimelineEntity entity = null;
+    do {
+      entity =
+          store.getEntity(containerId.toString(),
+              ContainerMetricsConstants.ENTITY_TYPE,
+              EnumSet.allOf(Field.class));
+    } while (entity == null || entity.getEvents().size() < 1);
+    Assert.assertNotNull(entity.getOtherInfo());
+    Assert.assertEquals(2, entity.getOtherInfo().size());
+    Assert.assertNotNull(entity.getOtherInfo().get(
+        ContainerMetricsConstants.ALLOCATED_HOST_ENTITY_INFO));
+    Assert.assertNotNull(entity.getOtherInfo().get(
+        ContainerMetricsConstants.ALLOCATED_PORT_ENTITY_INFO));
+    Assert.assertEquals(
+        container.getAllocatedNode().getHost(),
+        entity.getOtherInfo().get(
+            ContainerMetricsConstants.ALLOCATED_HOST_ENTITY_INFO));
+    Assert.assertEquals(
+        container.getAllocatedNode().getPort(),
+        entity.getOtherInfo().get(
+            ContainerMetricsConstants.ALLOCATED_PORT_ENTITY_INFO));
+  }
+
+  @Test(timeout = 10000)
   public void testPublishContainerMetrics() throws Exception {
     ContainerId containerId =
         ContainerId.newContainerId(ApplicationAttemptId.newInstance(
@@ -354,10 +424,12 @@ public class TestSystemMetricsPublisher {
         container.getAllocatedNode().getPort(),
         entity.getOtherInfo().get(
             ContainerMetricsConstants.ALLOCATED_PORT_ENTITY_INFO));
-    Assert.assertEquals(
-        container.getAllocatedResource().getMemory(),
-        entity.getOtherInfo().get(
-            ContainerMetricsConstants.ALLOCATED_MEMORY_ENTITY_INFO));
+    Assert.assertEquals(container.getAllocatedResource().getMemorySize(),
+        // KeyValueBasedTimelineStore could cast long to integer, need make sure
+        // variables for compare have same type.
+        ((Integer) entity.getOtherInfo().get(
+            ContainerMetricsConstants.ALLOCATED_MEMORY_ENTITY_INFO))
+            .longValue());
     Assert.assertEquals(
         container.getAllocatedResource().getVirtualCores(),
         entity.getOtherInfo().get(
@@ -426,19 +498,23 @@ public class TestSystemMetricsPublisher {
     when(amReq.getNodeLabelExpression()).thenReturn("high-mem");
     when(app.getAMResourceRequest()).thenReturn(amReq);
     when(app.getAmNodeLabelExpression()).thenCallRealMethod();
+    when(app.getCallerContext())
+        .thenReturn(new CallerContext.Builder("context").build());
     return app;
   }
 
   private static RMAppAttempt createRMAppAttempt(
-      ApplicationAttemptId appAttemptId) {
+      ApplicationAttemptId appAttemptId, boolean unmanagedAMAttempt) {
     RMAppAttempt appAttempt = mock(RMAppAttempt.class);
     when(appAttempt.getAppAttemptId()).thenReturn(appAttemptId);
     when(appAttempt.getHost()).thenReturn("test host");
     when(appAttempt.getRpcPort()).thenReturn(-100);
-    Container container = mock(Container.class);
-    when(container.getId())
-        .thenReturn(ContainerId.newContainerId(appAttemptId, 1));
-    when(appAttempt.getMasterContainer()).thenReturn(container);
+    if (!unmanagedAMAttempt) {
+      Container container = mock(Container.class);
+      when(container.getId())
+          .thenReturn(ContainerId.newContainerId(appAttemptId, 1));
+      when(appAttempt.getMasterContainer()).thenReturn(container);
+    }
     when(appAttempt.getDiagnostics()).thenReturn("test diagnostics info");
     when(appAttempt.getTrackingUrl()).thenReturn("test tracking url");
     when(appAttempt.getOriginalTrackingUrl()).thenReturn(

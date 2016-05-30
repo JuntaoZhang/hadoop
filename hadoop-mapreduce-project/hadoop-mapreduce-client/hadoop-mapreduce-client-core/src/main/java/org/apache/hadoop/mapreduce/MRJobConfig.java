@@ -425,6 +425,13 @@ public interface MRJobConfig {
       "mapreduce.job.running.reduce.limit";
   public static final int DEFAULT_JOB_RUNNING_REDUCE_LIMIT = 0;
 
+  /* Config for Limit on the number of map tasks allowed per job
+   * There is no limit if this value is negative.
+   */
+  public static final String JOB_MAX_MAP =
+      "mapreduce.job.max.map";
+  public static final int DEFAULT_JOB_MAX_MAP = -1;
+
   /* config for tracking the local file where all the credentials for the job
    * credentials.
    */
@@ -740,6 +747,16 @@ public interface MRJobConfig {
   public static final String MR_AM_ADMIN_USER_ENV =
       MR_AM_PREFIX + "admin.user.env";
 
+  // although the AM admin user env default should be the same as the task user
+  // env default, there are problems in making it work on Windows currently
+  // MAPREDUCE-6588 should address the issue and set it to a proper non-empty
+  // value
+  public static final String DEFAULT_MR_AM_ADMIN_USER_ENV =
+      Shell.WINDOWS ?
+          "" :
+          "LD_LIBRARY_PATH=" + Apps.crossPlatformify("HADOOP_COMMON_HOME") +
+              "/lib/native";
+
   public static final String MR_AM_PROFILE = MR_AM_PREFIX + "profile";
   public static final boolean DEFAULT_MR_AM_PROFILE = false;
   public static final String MR_AM_PROFILE_PARAMS = MR_AM_PREFIX
@@ -763,10 +780,13 @@ public interface MRJobConfig {
   public static final String MAPRED_ADMIN_USER_ENV =
       "mapreduce.admin.user.env";
 
-  public final String DEFAULT_MAPRED_ADMIN_USER_ENV = 
-      Shell.WINDOWS ? 
-          "PATH=%PATH%;%HADOOP_COMMON_HOME%\\bin":
-          "LD_LIBRARY_PATH=$HADOOP_COMMON_HOME/lib/native";
+  // the "%...%" macros can be expanded prematurely and are probably not OK
+  // this should be addressed by MAPREDUCE-6588
+  public static final String DEFAULT_MAPRED_ADMIN_USER_ENV =
+      Shell.WINDOWS ?
+          "PATH=%PATH%;%HADOOP_COMMON_HOME%\\bin" :
+          "LD_LIBRARY_PATH=" + Apps.crossPlatformify("HADOOP_COMMON_HOME") +
+              "/lib/native";
 
   public static final String WORKDIR = "work";
 
@@ -946,4 +966,15 @@ public interface MRJobConfig {
   public static final int DEFAULT_MR_ENCRYPTED_INTERMEDIATE_DATA_BUFFER_KB =
           128;
 
+  /**
+   * Number of OPPORTUNISTIC Containers per 100 containers that will be
+   * requested by the MRAppMaster. The Default value is 0, which implies all
+   * maps will be guaranteed. A value of 100 means all maps will be requested
+   * as opportunistic. For any other value say 'x', the FIRST 'x' maps
+   * requested by the AM will be opportunistic. If the total number of maps
+   * for the job is less than 'x', then ALL maps will be OPPORTUNISTIC
+   */
+  public static final String MR_NUM_OPPORTUNISTIC_MAPS_PER_100 =
+      "mapreduce.job.num-opportunistic-maps-per-100";
+  public static final int DEFAULT_MR_NUM_OPPORTUNISTIC_MAPS_PER_100 = 0;
 }

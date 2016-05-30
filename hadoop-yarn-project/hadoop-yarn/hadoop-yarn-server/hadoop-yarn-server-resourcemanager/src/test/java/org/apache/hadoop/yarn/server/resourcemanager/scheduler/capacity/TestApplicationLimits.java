@@ -49,8 +49,11 @@ import org.apache.hadoop.yarn.factory.providers.RecordFactoryProvider;
 import org.apache.hadoop.yarn.nodelabels.CommonNodeLabelsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.RMContext;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
+import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttempt;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ActiveUsersManager;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceLimits;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceUsage;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.preemption.PreemptionManager;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.fica.FiCaSchedulerApp;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.fica.FiCaSchedulerNode;
 import org.apache.hadoop.yarn.server.resourcemanager.security.RMContainerTokenSecretManager;
@@ -180,7 +183,8 @@ public class TestApplicationLimits {
     ActiveUsersManager activeUsersManager = mock(ActiveUsersManager.class);
     when(queue.getActiveUsersManager()).thenReturn(activeUsersManager);
 
-    assertEquals(Resource.newInstance(8 * GB, 1), queue.getAMResourceLimit());
+    assertEquals(Resource.newInstance(8 * GB, 1),
+        queue.calculateAndGetAMResourceLimit());
     assertEquals(Resource.newInstance(4 * GB, 1),
       queue.getUserAMResourceLimit());
     
@@ -262,6 +266,7 @@ public class TestApplicationLimits {
         thenReturn(CapacityScheduler.nonPartitionedQueueComparator);
     when(csContext.getResourceCalculator()).thenReturn(resourceCalculator);
     when(csContext.getRMContext()).thenReturn(rmContext);
+    when(csContext.getPreemptionManager()).thenReturn(new PreemptionManager());
     
     // Say cluster has 100 nodes of 16G each
     Resource clusterResource = 
@@ -281,19 +286,18 @@ public class TestApplicationLimits {
     		queue.getUserAMResourceLimit());
     
     Resource amResourceLimit = Resource.newInstance(160 * GB, 1);
-    assertEquals(queue.getAMResourceLimit(), amResourceLimit);
-    assertEquals(queue.getAMResourceLimit(), amResourceLimit);
+    assertEquals(queue.calculateAndGetAMResourceLimit(), amResourceLimit);
     assertEquals(queue.getUserAMResourceLimit(), 
       Resource.newInstance(80*GB, 1));
     
     // Assert in metrics
     assertEquals(queue.getMetrics().getAMResourceLimitMB(),
-        amResourceLimit.getMemory());
+        amResourceLimit.getMemorySize());
     assertEquals(queue.getMetrics().getAMResourceLimitVCores(),
         amResourceLimit.getVirtualCores());
 
     assertEquals(
-        (int)(clusterResource.getMemory() * queue.getAbsoluteCapacity()),
+        (int)(clusterResource.getMemorySize() * queue.getAbsoluteCapacity()),
         queue.getMetrics().getAvailableMB()
         );
     
@@ -302,12 +306,13 @@ public class TestApplicationLimits {
     root.updateClusterResource(clusterResource, new ResourceLimits(
         clusterResource));
     
-    assertEquals(queue.getAMResourceLimit(), Resource.newInstance(192*GB, 1));
+    assertEquals(queue.calculateAndGetAMResourceLimit(),
+        Resource.newInstance(192 * GB, 1));
     assertEquals(queue.getUserAMResourceLimit(), 
       Resource.newInstance(96*GB, 1));
     
     assertEquals(
-        (int)(clusterResource.getMemory() * queue.getAbsoluteCapacity()),
+        (int)(clusterResource.getMemorySize() * queue.getAbsoluteCapacity()),
         queue.getMetrics().getAvailableMB()
         );
 
@@ -321,8 +326,9 @@ public class TestApplicationLimits {
         queue.getAbsoluteCapacity());
     assertEquals(expectedMaxApps, queue.getMaxApplications());
 
-    int expectedMaxAppsPerUser = (int)(expectedMaxApps *
-        (queue.getUserLimit()/100.0f) * queue.getUserLimitFactor());
+    int expectedMaxAppsPerUser = Math.min(expectedMaxApps,
+        (int)(expectedMaxApps * (queue.getUserLimit()/100.0f) *
+        queue.getUserLimitFactor()));
     assertEquals(expectedMaxAppsPerUser, queue.getMaxApplicationsPerUser());
 
     // should default to global setting if per queue setting not set
@@ -352,7 +358,8 @@ public class TestApplicationLimits {
           queue.getQueuePath())
         );
     
-    assertEquals(queue.getAMResourceLimit(), Resource.newInstance(800*GB, 1));
+    assertEquals(queue.calculateAndGetAMResourceLimit(),
+        Resource.newInstance(800 * GB, 1));
     assertEquals(queue.getUserAMResourceLimit(), 
       Resource.newInstance(400*GB, 1));
 
@@ -371,8 +378,8 @@ public class TestApplicationLimits {
     assertEquals(9999, (int)csConf.getMaximumApplicationsPerQueue(queue.getQueuePath()));
     assertEquals(9999, queue.getMaxApplications());
 
-    expectedMaxAppsPerUser = (int)(9999 *
-        (queue.getUserLimit()/100.0f) * queue.getUserLimitFactor());
+    expectedMaxAppsPerUser = Math.min(9999, (int)(9999 *
+        (queue.getUserLimit()/100.0f) * queue.getUserLimitFactor()));
     assertEquals(expectedMaxAppsPerUser, queue.getMaxApplicationsPerUser());
   }
   
@@ -382,7 +389,8 @@ public class TestApplicationLimits {
     final String user_1 = "user_1";
     final String user_2 = "user_2";
     
-    assertEquals(Resource.newInstance(16 * GB, 1), queue.getAMResourceLimit());
+    assertEquals(Resource.newInstance(16 * GB, 1),
+        queue.calculateAndGetAMResourceLimit());
     assertEquals(Resource.newInstance(8 * GB, 1),
       queue.getUserAMResourceLimit());
     
@@ -573,8 +581,12 @@ public class TestApplicationLimits {
     when(csContext.getClusterResource()).thenReturn(clusterResource);
     
     Map<String, CSQueue> queues = new HashMap<String, CSQueue>();
-    CapacityScheduler.parseQueue(csContext, csConf, null, "root", 
-        queues, queues, TestUtils.spyHook);
+    CSQueue rootQueue = CapacityScheduler.parseQueue(csContext, csConf, null,
+        "root", queues, queues, TestUtils.spyHook);
+
+    ResourceUsage queueCapacities = rootQueue.getQueueResourceUsage();
+    when(csContext.getClusterResourceUsage())
+        .thenReturn(queueCapacities);
 
     // Manipulate queue 'a'
     LeafQueue queue = TestLeafQueue.stubLeafQueue((LeafQueue)queues.get(A));
@@ -602,7 +614,13 @@ public class TestApplicationLimits {
     when(rmApp.getAMResourceRequest()).thenReturn(amResourceRequest);
     Mockito.doReturn(rmApp).when(spyApps).get((ApplicationId)Matchers.any());
     when(spyRMContext.getRMApps()).thenReturn(spyApps);
-    
+    RMAppAttempt rmAppAttempt = mock(RMAppAttempt.class);
+    when(rmApp.getRMAppAttempt((ApplicationAttemptId) Matchers.any()))
+        .thenReturn(rmAppAttempt);
+    when(rmApp.getCurrentAppAttempt()).thenReturn(rmAppAttempt);
+    Mockito.doReturn(rmApp).when(spyApps).get((ApplicationId) Matchers.any());
+    Mockito.doReturn(true).when(spyApps)
+        .containsKey((ApplicationId) Matchers.any());
 
     Priority priority_1 = TestUtils.createMockPriority(1);
 
@@ -645,8 +663,7 @@ public class TestApplicationLimits {
     queue.assignContainers(clusterResource, node_0, new ResourceLimits(
         clusterResource), SchedulingMode.RESPECT_PARTITION_EXCLUSIVITY); // Schedule to compute
     assertEquals(expectedHeadroom, app_0_0.getHeadroom());
-    // TODO, need fix headroom in future patch
-    //  assertEquals(expectedHeadroom, app_0_1.getHeadroom());// no change
+    assertEquals(expectedHeadroom, app_0_1.getHeadroom());// no change
     
     // Submit first application from user_1, check  for new headroom
     final ApplicationAttemptId appAttemptId_1_0 = 
@@ -667,9 +684,8 @@ public class TestApplicationLimits {
         clusterResource), SchedulingMode.RESPECT_PARTITION_EXCLUSIVITY); // Schedule to compute
     expectedHeadroom = Resources.createResource(10*16*GB / 2, 1); // changes
     assertEquals(expectedHeadroom, app_0_0.getHeadroom());
-    // TODO, need fix headroom in future patch
-//    assertEquals(expectedHeadroom, app_0_1.getHeadroom());
-//    assertEquals(expectedHeadroom, app_1_0.getHeadroom());
+    assertEquals(expectedHeadroom, app_0_1.getHeadroom());
+    assertEquals(expectedHeadroom, app_1_0.getHeadroom());
 
     // Now reduce cluster size and check for the smaller headroom
     clusterResource = Resources.createResource(90*16*GB);
@@ -677,9 +693,8 @@ public class TestApplicationLimits {
         clusterResource), SchedulingMode.RESPECT_PARTITION_EXCLUSIVITY); // Schedule to compute
     expectedHeadroom = Resources.createResource(9*16*GB / 2, 1); // changes
     assertEquals(expectedHeadroom, app_0_0.getHeadroom());
-    // TODO, need fix headroom in future patch
-//    assertEquals(expectedHeadroom, app_0_1.getHeadroom());
-//    assertEquals(expectedHeadroom, app_1_0.getHeadroom());
+    assertEquals(expectedHeadroom, app_0_1.getHeadroom());
+    assertEquals(expectedHeadroom, app_1_0.getHeadroom());
   }
   
 

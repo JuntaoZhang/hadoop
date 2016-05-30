@@ -189,7 +189,8 @@ public class MiniDFSCluster {
     private boolean checkDataNodeHostConfig = false;
     private Configuration[] dnConfOverlays;
     private boolean skipFsyncForTesting = true;
-    
+    private boolean useConfiguredTopologyMappingClass = false;
+
     public Builder(Configuration conf) {
       this.conf = conf;
       this.storagesPerDatanode =
@@ -433,7 +434,14 @@ public class MiniDFSCluster {
       this.skipFsyncForTesting = val;
       return this;
     }
-    
+
+    public Builder useConfiguredTopologyMappingClass(
+        boolean useConfiguredTopologyMappingClass) {
+      this.useConfiguredTopologyMappingClass =
+          useConfiguredTopologyMappingClass;
+      return this;
+    }
+
     /**
      * Construct the actual MiniDFSCluster
      */
@@ -501,7 +509,8 @@ public class MiniDFSCluster {
                        builder.checkDataNodeAddrConfig,
                        builder.checkDataNodeHostConfig,
                        builder.dnConfOverlays,
-                       builder.skipFsyncForTesting);
+                       builder.skipFsyncForTesting,
+                       builder.useConfiguredTopologyMappingClass);
   }
   
   public class DataNodeProperties {
@@ -756,12 +765,13 @@ public class MiniDFSCluster {
                        operation, null, racks, hosts,
                        null, simulatedCapacities, null, true, false,
                        MiniDFSNNTopology.simpleSingleNN(nameNodePort, 0),
-                       true, false, false, null, true);
+                       true, false, false, null, true, false);
   }
 
   private void initMiniDFSCluster(
       Configuration conf,
-      int numDataNodes, StorageType[][] storageTypes, boolean format, boolean manageNameDfsDirs,
+      int numDataNodes, StorageType[][] storageTypes, boolean format,
+      boolean manageNameDfsDirs,
       boolean manageNameDfsSharedDirs, boolean enableManagedDfsDirsRedundancy,
       boolean manageDataDfsDirs, StartupOption startOpt,
       StartupOption dnStartOpt, String[] racks,
@@ -772,7 +782,8 @@ public class MiniDFSCluster {
       boolean checkDataNodeAddrConfig,
       boolean checkDataNodeHostConfig,
       Configuration[] dnConfOverlays,
-      boolean skipFsyncForTesting)
+      boolean skipFsyncForTesting,
+      boolean useConfiguredTopologyMappingClass)
   throws IOException {
     boolean success = false;
     try {
@@ -797,9 +808,11 @@ public class MiniDFSCluster {
           DFS_NAMENODE_SAFEMODE_EXTENSION_TESTING_KEY, 0);
       conf.setInt(DFS_NAMENODE_SAFEMODE_EXTENSION_KEY, safemodeExtension);
       conf.setInt(DFS_NAMENODE_DECOMMISSION_INTERVAL_KEY, 3); // 3 second
-      conf.setClass(NET_TOPOLOGY_NODE_SWITCH_MAPPING_IMPL_KEY, 
-                     StaticMapping.class, DNSToSwitchMapping.class);
-    
+      if (!useConfiguredTopologyMappingClass) {
+        conf.setClass(NET_TOPOLOGY_NODE_SWITCH_MAPPING_IMPL_KEY,
+            StaticMapping.class, DNSToSwitchMapping.class);
+      }
+
       // In an HA cluster, in order for the StandbyNode to perform checkpoints,
       // it needs to know the HTTP port of the Active. So, if ephemeral ports
       // are chosen, disable checkpoints for the test.
@@ -1259,6 +1272,11 @@ public class MiniDFSCluster {
     if (nn.getHttpsAddress() != null) {
       hdfsConf.set(DFSUtil.addKeySuffixes(DFS_NAMENODE_HTTPS_ADDRESS_KEY,
           nameserviceId, nnId), NetUtils.getHostPortString(nn.getHttpsAddress()));
+    }
+    if (hdfsConf.get(DFS_NAMENODE_LIFELINE_RPC_ADDRESS_KEY) != null) {
+      hdfsConf.set(DFSUtil.addKeySuffixes(DFS_NAMENODE_LIFELINE_RPC_ADDRESS_KEY,
+          nameserviceId, nnId),
+          hdfsConf.get(DFS_NAMENODE_LIFELINE_RPC_ADDRESS_KEY));
     }
     copyKeys(hdfsConf, conf, nameserviceId, nnId);
     DFSUtil.setGenericConf(hdfsConf, nameserviceId, nnId,
@@ -1908,12 +1926,7 @@ public class MiniDFSCluster {
     shutdownDataNodes();
     for (NameNodeInfo nnInfo : namenodes.values()) {
       if (nnInfo == null) continue;
-      NameNode nameNode = nnInfo.nameNode;
-      if (nameNode != null) {
-        nameNode.stop();
-        nameNode.join();
-        nameNode = null;
-      }
+      stopAndJoinNameNode(nnInfo.nameNode);
     }
     ShutdownHookManager.get().clearShutdownHooks();
     if (base_dir != null) {
@@ -1953,17 +1966,25 @@ public class MiniDFSCluster {
    */
   public synchronized void shutdownNameNode(int nnIndex) {
     NameNodeInfo info = getNN(nnIndex);
-    NameNode nn = info.nameNode;
-    if (nn != null) {
-      LOG.info("Shutting down the namenode");
-      nn.stop();
-      nn.join();
-      info.nnId = null;
-      info.nameNode = null;
-      info.nameserviceId = null;
-    }
+    stopAndJoinNameNode(info.nameNode);
+    info.nnId = null;
+    info.nameNode = null;
+    info.nameserviceId = null;
   }
-  
+
+  /**
+   * Fully stop the NameNode by stop and join.
+   */
+  private void stopAndJoinNameNode(NameNode nn) {
+    if (nn == null) {
+      return;
+    }
+    LOG.info("Shutting down the namenode");
+    nn.stop();
+    nn.join();
+    nn.joinHttpServer();
+  }
+
   /**
    * Restart all namenodes.
    */
@@ -2141,12 +2162,10 @@ public class MiniDFSCluster {
     getMaterializedReplica(i, blk).truncateMeta(newSize);
   }
 
-  public boolean changeGenStampOfBlock(int dnIndex, ExtendedBlock blk,
+  public void changeGenStampOfBlock(int dnIndex, ExtendedBlock blk,
       long newGenStamp) throws IOException {
-    File blockFile = getBlockFile(dnIndex, blk);
-    File metaFile = FsDatasetUtil.findMetaFile(blockFile);
-    return metaFile.renameTo(new File(DatanodeUtil.getMetaName(
-        blockFile.getAbsolutePath(), newGenStamp)));
+    getFsDatasetTestUtils(dnIndex)
+        .changeStoredGenerationStamp(blk, newGenStamp);
   }
 
   /*
@@ -2184,6 +2203,28 @@ public class MiniDFSCluster {
       }
     }
     return stopDataNode(node);
+  }
+
+  /*
+   * Shutdown a particular datanode
+   * @param i node index
+   * @return null if the node index is out of range, else the properties of the
+   * removed node
+   */
+  public synchronized DataNodeProperties stopDataNodeForUpgrade(int i)
+      throws IOException {
+    if (i < 0 || i >= dataNodes.size()) {
+      return null;
+    }
+    DataNodeProperties dnprop = dataNodes.remove(i);
+    DataNode dn = dnprop.datanode;
+    LOG.info("MiniDFSCluster Stopping DataNode " +
+        dn.getDisplayName() +
+        " from a total of " + (dataNodes.size() + 1) +
+        " datanodes.");
+    dn.shutdownDatanode(true);
+    numDataNodes--;
+    return dnprop;
   }
 
   /**

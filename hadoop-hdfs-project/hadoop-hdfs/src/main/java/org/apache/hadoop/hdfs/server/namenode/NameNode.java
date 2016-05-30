@@ -21,11 +21,15 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.HadoopIllegalArgumentException;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.conf.ReconfigurableBase;
+import org.apache.hadoop.conf.ReconfigurationException;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Trash;
 import org.apache.hadoop.ha.HAServiceProtocol.HAServiceState;
@@ -41,6 +45,7 @@ import org.apache.hadoop.hdfs.HdfsConfiguration;
 import org.apache.hadoop.hdfs.client.HdfsClientConfigKeys;
 import org.apache.hadoop.hdfs.protocol.ClientProtocol;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+import org.apache.hadoop.hdfs.server.blockmanagement.DatanodeManager;
 import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.NamenodeRole;
 import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.RollingUpgradeStartupOption;
 import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.StartupOption;
@@ -94,6 +99,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.TreeSet;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -102,6 +108,8 @@ import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.FS_DEFAULT_NAME
 import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.FS_TRASH_INTERVAL_DEFAULT;
 import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.FS_TRASH_INTERVAL_KEY;
 import static org.apache.hadoop.hdfs.client.HdfsClientConfigKeys.DFS_NAMENODE_RPC_PORT_DEFAULT;
+import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_CALLER_CONTEXT_ENABLED_KEY;
+import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_CALLER_CONTEXT_ENABLED_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_HA_AUTO_FAILOVER_ENABLED_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_HA_AUTO_FAILOVER_ENABLED_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_HA_FENCE_METHODS_KEY;
@@ -141,8 +149,16 @@ import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_SUPPORT_ALLOW_FO
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMESERVICE_ID;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_SECONDARY_NAMENODE_KEYTAB_FILE_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.HADOOP_USER_GROUP_METRICS_PERCENTILES_INTERVALS;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_HEARTBEAT_INTERVAL_KEY;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_HEARTBEAT_INTERVAL_DEFAULT;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_HEARTBEAT_RECHECK_INTERVAL_KEY;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_HEARTBEAT_RECHECK_INTERVAL_DEFAULT;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.FS_PROTECTED_DIRECTORIES;
 import static org.apache.hadoop.util.ExitUtil.terminate;
 import static org.apache.hadoop.util.ToolRunner.confirmPrompt;
+import static org.apache.hadoop.fs.CommonConfigurationKeys.IPC_BACKOFF_ENABLE;
+import static org.apache.hadoop.fs.CommonConfigurationKeys.IPC_NAMESPACE;
+import static org.apache.hadoop.fs.CommonConfigurationKeys.IPC_BACKOFF_ENABLE_DEFAULT;
 
 /**********************************************************
  * NameNode serves as both directory namespace manager and
@@ -182,7 +198,8 @@ import static org.apache.hadoop.util.ToolRunner.confirmPrompt;
  * NameNode state, for example partial blocksMap etc.
  **********************************************************/
 @InterfaceAudience.Private
-public class NameNode implements NameNodeStatusMXBean {
+public class NameNode extends ReconfigurableBase implements
+    NameNodeStatusMXBean {
   static{
     HdfsConfiguration.init();
   }
@@ -260,7 +277,17 @@ public class NameNode implements NameNodeStatusMXBean {
   public static final String[] NAMESERVICE_SPECIFIC_KEYS = {
     DFS_HA_AUTO_FAILOVER_ENABLED_KEY
   };
-  
+
+  private String ipcClientRPCBackoffEnable;
+
+  /** A list of property that are reconfigurable at runtime. */
+  private final TreeSet<String> reconfigurableProperties = Sets
+      .newTreeSet(Lists.newArrayList(
+          DFS_HEARTBEAT_INTERVAL_KEY,
+          DFS_NAMENODE_HEARTBEAT_RECHECK_INTERVAL_KEY,
+          FS_PROTECTED_DIRECTORIES,
+          HADOOP_CALLER_CONTEXT_ENABLED_KEY));
+
   private static final String USAGE = "Usage: hdfs namenode ["
       + StartupOption.BACKUP.getName() + "] | \n\t["
       + StartupOption.CHECKPOINT.getName() + "] | \n\t["
@@ -282,8 +309,7 @@ public class NameNode implements NameNodeStatusMXBean {
       + StartupOption.BOOTSTRAPSTANDBY.getName() + "] | \n\t["
       + StartupOption.RECOVER.getName() + " [ "
       + StartupOption.FORCE.getName() + "] ] | \n\t["
-      + StartupOption.METADATAVERSION.getName() + " ] "
-      + " ]";
+      + StartupOption.METADATAVERSION.getName() + " ]";
 
   
   public long getProtocolVersion(String protocol, 
@@ -330,7 +356,6 @@ public class NameNode implements NameNodeStatusMXBean {
       LogFactory.getLog("NameNodeMetricsLog");
 
   protected FSNamesystem namesystem; 
-  protected final Configuration conf;
   protected final NamenodeRole role;
   private volatile HAState state;
   private final boolean haEnabled;
@@ -383,7 +408,7 @@ public class NameNode implements NameNodeStatusMXBean {
     return rpcServer;
   }
   
-  static void initMetrics(Configuration conf, NamenodeRole role) {
+  public static void initMetrics(Configuration conf, NamenodeRole role) {
     metrics = NameNodeMetrics.create(conf, role);
   }
 
@@ -489,6 +514,10 @@ public class NameNode implements NameNodeStatusMXBean {
 
   boolean isRole(NamenodeRole that) {
     return role.equals(that);
+  }
+
+  public static String composeNotStartedMessage(NamenodeRole role) {
+    return role + " still not started";
   }
 
   /**
@@ -671,6 +700,11 @@ public class NameNode implements NameNodeStatusMXBean {
     NameNode.initMetrics(conf, this.getRole());
     StartupProgressMetrics.register(startupProgress);
 
+    pauseMonitor = new JvmPauseMonitor();
+    pauseMonitor.init(conf);
+    pauseMonitor.start();
+    metrics.getJvmMetrics().setPauseMonitor(pauseMonitor);
+
     if (NamenodeRole.NAMENODE == role) {
       startHttpServer(conf);
     }
@@ -678,6 +712,9 @@ public class NameNode implements NameNodeStatusMXBean {
     loadNamesystem(conf);
 
     rpcServer = createRpcServer(conf);
+
+    initReconfigurableBackoffKey();
+
     if (clientNamenodeAddress == null) {
       // This is expected for MiniDFSCluster. Set it now using 
       // the RPC server's bind address.
@@ -690,13 +727,21 @@ public class NameNode implements NameNodeStatusMXBean {
       httpServer.setNameNodeAddress(getNameNodeAddress());
       httpServer.setFSImage(getFSImage());
     }
-    
-    pauseMonitor = new JvmPauseMonitor(conf);
-    pauseMonitor.start();
-    metrics.getJvmMetrics().setPauseMonitor(pauseMonitor);
-    
+
     startCommonServices(conf);
     startMetricsLogger(conf);
+  }
+
+  private void initReconfigurableBackoffKey() {
+    ipcClientRPCBackoffEnable = buildBackoffEnableKey(rpcServer
+        .getClientRpcServer().getPort());
+    reconfigurableProperties.add(ipcClientRPCBackoffEnable);
+  }
+
+  static String buildBackoffEnableKey(final int port) {
+    // format used to construct backoff enable key, e.g. ipc.8020.backoff.enable
+    String format = "%s.%d.%s";
+    return String.format(format, IPC_NAMESPACE, port, IPC_BACKOFF_ENABLE);
   }
 
   /**
@@ -864,12 +909,12 @@ public class NameNode implements NameNodeStatusMXBean {
 
   protected NameNode(Configuration conf, NamenodeRole role)
       throws IOException {
+    super(conf);
     this.tracer = new Tracer.Builder("NameNode").
         conf(TraceUtils.wrapHadoopConf(NAMENODE_HTRACE_PREFIX, conf)).
         build();
     this.tracerConfigurationManager =
         new TracerConfigurationManager(NAMENODE_HTRACE_PREFIX, conf);
-    this.conf = conf;
     this.role = role;
     setClientNamenodeAddress(conf);
     String nsId = getNameServiceId(conf);
@@ -880,7 +925,7 @@ public class NameNode implements NameNodeStatusMXBean {
     this.haContext = createHAContext();
     try {
       initializeGenericKeys(conf, nsId, namenodeId);
-      initialize(conf);
+      initialize(getConf());
       try {
         haContext.writeLock();
         state.prepareToEnterState(haContext);
@@ -1018,6 +1063,22 @@ public class NameNode implements NameNodeStatusMXBean {
    */
   public InetSocketAddress getHttpsAddress() {
     return httpServer.getHttpsAddress();
+  }
+
+  /**
+   * @return NameNodeHttpServer, used by unit tests to ensure a full shutdown,
+   * so that no bind exception is thrown during restart.
+   */
+  @VisibleForTesting
+  public void joinHttpServer() {
+    if (httpServer != null) {
+      try {
+        httpServer.join();
+      } catch (InterruptedException e) {
+        LOG.info("Caught InterruptedException joining NameNodeHttpServer", e);
+        Thread.currentThread().interrupt();
+      }
+    }
   }
 
   /**
@@ -1247,7 +1308,6 @@ public class NameNode implements NameNodeStatusMXBean {
           newSharedEditLog.logEdit(op);
 
           if (op.opCode == FSEditLogOpCodes.OP_END_LOG_SEGMENT) {
-            newSharedEditLog.logSync();
             newSharedEditLog.endCurrentLogSegment(false);
             LOG.debug("ending log segment because of END_LOG_SEGMENT op in "
                 + stream);
@@ -1682,11 +1742,9 @@ public class NameNode implements NameNodeStatusMXBean {
     HAServiceState retState = state.getServiceState();
     HAServiceStatus ret = new HAServiceStatus(retState);
     if (retState == HAServiceState.STANDBY) {
-      String safemodeTip = namesystem.getSafeModeTip();
-      if (!safemodeTip.isEmpty()) {
-        ret.setNotReadyToBecomeActive(
-            "The NameNode is in safemode. " +
-            safemodeTip);
+      if (namesystem.isInSafeMode()) {
+        ret.setNotReadyToBecomeActive("The NameNode is in safemode. " +
+            namesystem.getSafeModeTip());
       } else {
         ret.setReadyToBecomeActive();
       }
@@ -1791,7 +1849,7 @@ public class NameNode implements NameNodeStatusMXBean {
     public void startActiveServices() throws IOException {
       try {
         namesystem.startActiveServices();
-        startTrashEmptier(conf);
+        startTrashEmptier(getConf());
       } catch (Throwable t) {
         doImmediateShutdown(t);
       }
@@ -1812,7 +1870,7 @@ public class NameNode implements NameNodeStatusMXBean {
     @Override
     public void startStandbyServices() throws IOException {
       try {
-        namesystem.startStandbyServices(conf);
+        namesystem.startStandbyServices(getConf());
       } catch (Throwable t) {
         doImmediateShutdown(t);
       }
@@ -1889,8 +1947,8 @@ public class NameNode implements NameNodeStatusMXBean {
    */
   void checkHaStateChange(StateChangeRequestInfo req)
       throws AccessControlException {
-    boolean autoHaEnabled = conf.getBoolean(DFS_HA_AUTO_FAILOVER_ENABLED_KEY,
-        DFS_HA_AUTO_FAILOVER_ENABLED_DEFAULT);
+    boolean autoHaEnabled = getConf().getBoolean(
+        DFS_HA_AUTO_FAILOVER_ENABLED_KEY, DFS_HA_AUTO_FAILOVER_ENABLED_DEFAULT);
     switch (req.getSource()) {
     case REQUEST_BY_USER:
       if (autoHaEnabled) {
@@ -1916,5 +1974,117 @@ public class NameNode implements NameNodeStatusMXBean {
       }
       break;
     }
+  }
+
+  /*
+   * {@inheritDoc}
+   * */
+  @Override // ReconfigurableBase
+  public Collection<String> getReconfigurableProperties() {
+    return reconfigurableProperties;
+  }
+
+  /*
+   * {@inheritDoc}
+   * */
+  @Override // ReconfigurableBase
+  protected String reconfigurePropertyImpl(String property, String newVal)
+      throws ReconfigurationException {
+    final DatanodeManager datanodeManager = namesystem.getBlockManager()
+        .getDatanodeManager();
+
+    if (property.equals(DFS_HEARTBEAT_INTERVAL_KEY)) {
+      return reconfHeartbeatInterval(datanodeManager, property, newVal);
+    } else if (property.equals(DFS_NAMENODE_HEARTBEAT_RECHECK_INTERVAL_KEY)) {
+      return reconfHeartbeatRecheckInterval(datanodeManager, property, newVal);
+    } else if (property.equals(FS_PROTECTED_DIRECTORIES)) {
+      return reconfProtectedDirectories(newVal);
+    } else if (property.equals(HADOOP_CALLER_CONTEXT_ENABLED_KEY)) {
+      return reconfCallerContextEnabled(newVal);
+    } else if (property.equals(ipcClientRPCBackoffEnable)) {
+      return reconfigureIPCBackoffEnabled(newVal);
+    } else {
+      throw new ReconfigurationException(property, newVal, getConf().get(
+          property));
+    }
+  }
+
+  private String reconfHeartbeatInterval(final DatanodeManager datanodeManager,
+      final String property, final String newVal)
+      throws ReconfigurationException {
+    namesystem.writeLock();
+    try {
+      if (newVal == null) {
+        // set to default
+        datanodeManager.setHeartbeatInterval(DFS_HEARTBEAT_INTERVAL_DEFAULT);
+        return String.valueOf(DFS_HEARTBEAT_INTERVAL_DEFAULT);
+      } else {
+        datanodeManager.setHeartbeatInterval(Long.parseLong(newVal));
+        return String.valueOf(datanodeManager.getHeartbeatInterval());
+      }
+    } catch (NumberFormatException nfe) {
+      throw new ReconfigurationException(property, newVal, getConf().get(
+          property), nfe);
+    } finally {
+      namesystem.writeUnlock();
+      LOG.info("RECONFIGURE* changed heartbeatInterval to "
+          + datanodeManager.getHeartbeatInterval());
+    }
+  }
+
+  private String reconfHeartbeatRecheckInterval(
+      final DatanodeManager datanodeManager, final String property,
+      final String newVal) throws ReconfigurationException {
+    namesystem.writeLock();
+    try {
+      if (newVal == null) {
+        // set to default
+        datanodeManager.setHeartbeatRecheckInterval(
+            DFS_NAMENODE_HEARTBEAT_RECHECK_INTERVAL_DEFAULT);
+        return String.valueOf(DFS_NAMENODE_HEARTBEAT_RECHECK_INTERVAL_DEFAULT);
+      } else {
+        datanodeManager.setHeartbeatRecheckInterval(Integer.parseInt(newVal));
+        return String.valueOf(datanodeManager.getHeartbeatRecheckInterval());
+      }
+    } catch (NumberFormatException nfe) {
+      throw new ReconfigurationException(property, newVal, getConf().get(
+          property), nfe);
+    } finally {
+      namesystem.writeUnlock();
+      LOG.info("RECONFIGURE* changed heartbeatRecheckInterval to "
+          + datanodeManager.getHeartbeatRecheckInterval());
+    }
+  }
+
+  private String reconfProtectedDirectories(String newVal) {
+    return getNamesystem().getFSDirectory().setProtectedDirectories(newVal);
+  }
+
+  private String reconfCallerContextEnabled(String newVal) {
+    Boolean callerContextEnabled;
+    if (newVal == null) {
+      callerContextEnabled = HADOOP_CALLER_CONTEXT_ENABLED_DEFAULT;
+    } else {
+      callerContextEnabled = Boolean.parseBoolean(newVal);
+    }
+    namesystem.setCallerContextEnabled(callerContextEnabled);
+    return Boolean.toString(callerContextEnabled);
+  }
+
+  String reconfigureIPCBackoffEnabled(String newVal) {
+    boolean clientBackoffEnabled;
+    if (newVal == null) {
+      clientBackoffEnabled = IPC_BACKOFF_ENABLE_DEFAULT;
+    } else {
+      clientBackoffEnabled = Boolean.parseBoolean(newVal);
+    }
+    rpcServer.getClientRpcServer()
+        .setClientBackoffEnabled(clientBackoffEnabled);
+    return Boolean.toString(clientBackoffEnabled);
+  }
+
+  @Override  // ReconfigurableBase
+  protected Configuration getNewConf() {
+    return new HdfsConfiguration();
   }
 }

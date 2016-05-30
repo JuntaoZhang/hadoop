@@ -46,6 +46,7 @@ import org.apache.hadoop.hdfs.protocol.proto.DatanodeProtocolProtos.StorageBlock
 import org.apache.hadoop.hdfs.protocol.proto.DatanodeProtocolProtos.StorageReceivedDeletedBlocksProto;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.DatanodeIDProto;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.LocatedBlockProto;
+import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.RollingUpgradeStatusProto;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsServerProtos.VersionRequestProto;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsServerProtos.VersionResponseProto;
 import org.apache.hadoop.hdfs.server.protocol.DatanodeCommand;
@@ -67,6 +68,8 @@ public class DatanodeProtocolServerSideTranslatorPB implements
     DatanodeProtocolPB {
 
   private final DatanodeProtocol impl;
+  private final int maxDataLength;
+
   private static final ErrorReportResponseProto
       VOID_ERROR_REPORT_RESPONSE_PROTO = 
           ErrorReportResponseProto.newBuilder().build();
@@ -80,8 +83,10 @@ public class DatanodeProtocolServerSideTranslatorPB implements
       VOID_COMMIT_BLOCK_SYNCHRONIZATION_RESPONSE_PROTO =
           CommitBlockSynchronizationResponseProto.newBuilder().build();
 
-  public DatanodeProtocolServerSideTranslatorPB(DatanodeProtocol impl) {
+  public DatanodeProtocolServerSideTranslatorPB(DatanodeProtocol impl,
+      int maxDataLength) {
     this.impl = impl;
+    this.maxDataLength = maxDataLength;
   }
 
   @Override
@@ -132,9 +137,17 @@ public class DatanodeProtocolServerSideTranslatorPB implements
     RollingUpgradeStatus rollingUpdateStatus = response
         .getRollingUpdateStatus();
     if (rollingUpdateStatus != null) {
-      builder.setRollingUpgradeStatus(PBHelperClient
-          .convertRollingUpgradeStatus(rollingUpdateStatus));
+      // V2 is always set for newer datanodes.
+      // To be compatible with older datanodes, V1 is set to null
+      //  if the RU was finalized.
+      RollingUpgradeStatusProto rus = PBHelperClient.
+          convertRollingUpgradeStatus(rollingUpdateStatus);
+      builder.setRollingUpgradeStatusV2(rus);
+      if (!rollingUpdateStatus.isFinalized()) {
+        builder.setRollingUpgradeStatus(rus);
+      }
     }
+
     builder.setFullBlockReportLeaseId(response.getFullBlockReportLeaseId());
     return builder.build();
   }
@@ -153,9 +166,10 @@ public class DatanodeProtocolServerSideTranslatorPB implements
         int num = (int)s.getNumberOfBlocks();
         Preconditions.checkState(s.getBlocksCount() == 0,
             "cannot send both blocks list and buffers");
-        blocks = BlockListAsLongs.decodeBuffers(num, s.getBlocksBuffersList());
+        blocks = BlockListAsLongs.decodeBuffers(num, s.getBlocksBuffersList(),
+            maxDataLength);
       } else {
-        blocks = BlockListAsLongs.decodeLongs(s.getBlocksList());
+        blocks = BlockListAsLongs.decodeLongs(s.getBlocksList(), maxDataLength);
       }
       report[index++] = new StorageBlockReport(PBHelperClient.convert(s.getStorage()),
           blocks);

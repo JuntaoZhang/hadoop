@@ -21,6 +21,7 @@ package org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair;
 import java.io.Serializable;
 import java.text.DecimalFormat;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -85,6 +86,7 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
   // Key = RackName, Value = Set of Nodes reserved by app on rack
   private Map<String, Set<String>> reservations = new HashMap<>();
 
+  private List<FSSchedulerNode> blacklistNodeIds = new ArrayList<>();
   /**
    * Delay scheduling: We often want to prioritize scheduling of node-local
    * containers over rack-local or off-switch containers. To achieve this
@@ -133,21 +135,23 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
     rmContainer.handle(
         new RMContainerFinishedEvent(
             containerId,
-            containerStatus, 
+            containerStatus,
             event)
-        );
-    LOG.info("Completed container: " + rmContainer.getContainerId() + 
-        " in state: " + rmContainer.getState() + " event:" + event);
-    
+    );
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Completed container: " + rmContainer.getContainerId() +
+              " in state: " + rmContainer.getState() + " event:" + event);
+    }
+
     // Remove from the list of containers
     liveContainers.remove(rmContainer.getContainerId());
 
+    Resource containerResource = rmContainer.getContainer().getResource();
     RMAuditLogger.logSuccess(getUser(), 
         AuditConstants.RELEASE_CONTAINER, "SchedulerApp", 
-        getApplicationId(), containerId);
+        getApplicationId(), containerId, containerResource);
     
     // Update usage metrics 
-    Resource containerResource = rmContainer.getContainer().getResource();
     queue.getMetrics().releaseResources(getUser(), 1, containerResource);
     this.attemptResourceUsage.decUsed(containerResource);
 
@@ -179,6 +183,24 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
         + this.attemptResourceUsage.getReserved());
   }
 
+  private void subtractResourcesOnBlacklistedNodes(
+      Resource availableResources) {
+    if (appSchedulingInfo.getAndResetBlacklistChanged()) {
+      blacklistNodeIds.clear();
+      blacklistNodeIds.addAll(scheduler.getBlacklistedNodes(this));
+    }
+    for (FSSchedulerNode node: blacklistNodeIds) {
+      Resources.subtractFrom(availableResources,
+          node.getUnallocatedResource());
+    }
+    if (availableResources.getMemorySize() < 0) {
+      availableResources.setMemory(0);
+    }
+    if (availableResources.getVirtualCores() < 0) {
+      availableResources.setVirtualCores(0);
+    }
+  }
+
   /**
    * Headroom depends on resources in the cluster, current usage of the
    * queue, queue's fair-share and queue's max-resources.
@@ -196,6 +218,8 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
 
     Resource clusterAvailableResources =
         Resources.subtract(clusterResource, clusterUsage);
+    subtractResourcesOnBlacklistedNodes(clusterAvailableResources);
+
     Resource queueMaxAvailableResources =
         Resources.subtract(queue.getMaxShare(), queueUsage);
     Resource maxAvailableResource = Resources.componentwiseMin(
@@ -286,6 +310,13 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
 
     // default level is NODE_LOCAL
     if (! allowedLocalityLevel.containsKey(priority)) {
+      // add the initial time of priority to prevent comparing with FsApp
+      // startTime and allowedLocalityLevel degrade
+      lastScheduledContainer.put(priority, currentTimeMs);
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Init the lastScheduledContainer time, priority: " + priority
+            + ", time: " + currentTimeMs);
+      }
       allowedLocalityLevel.put(priority, NodeType.NODE_LOCAL);
       return NodeType.NODE_LOCAL;
     }
@@ -347,6 +378,7 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
     RMContainer rmContainer = new RMContainerImpl(container, 
         getApplicationAttemptId(), node.getNodeID(),
         appSchedulingInfo.getUser(), rmContext);
+    ((RMContainerImpl)rmContainer).setQueueName(this.getQueueName());
 
     // Add it to allContainers list.
     newlyAllocatedContainers.add(rmContainer);
@@ -372,7 +404,7 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
     }
     RMAuditLogger.logSuccess(getUser(), 
         AuditConstants.ALLOC_CONTAINER, "SchedulerApp", 
-        getApplicationId(), container.getId());
+        getApplicationId(), container.getId(), container.getResource());
     
     return rmContainer;
   }
@@ -451,8 +483,9 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
    * the container is {@code alreadyReserved} on the node, simply
    * update relevant bookeeping. This dispatches ro relevant handlers
    * in {@link FSSchedulerNode}..
+   * return whether reservation was possible with the current threshold limits
    */
-  private void reserve(Priority priority, FSSchedulerNode node,
+  private boolean reserve(Priority priority, FSSchedulerNode node,
       Container container, NodeType type, boolean alreadyReserved) {
 
     if (!reservationExceedsThreshold(node, type)) {
@@ -470,7 +503,9 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
         node.reserveResource(this, priority, rmContainer);
         setReservation(node);
       }
+      return true;
     }
+    return false;
   }
 
   private boolean reservationExceedsThreshold(FSSchedulerNode node,
@@ -578,7 +613,7 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
     Resource capability = request.getCapability();
 
     // How much does the node have?
-    Resource available = node.getAvailableResource();
+    Resource available = node.getUnallocatedResource();
 
     Container container = null;
     if (reserved) {
@@ -620,10 +655,9 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
       return container.getResource();
     }
 
-    if (isReservable(container)) {
-      // The desired container won't fit here, so reserve
-      reserve(request.getPriority(), node, container, type, reserved);
-
+    // The desired container won't fit here, so reserve
+    if (isReservable(container) &&
+        reserve(request.getPriority(), node, container, type, reserved)) {
       return FairScheduler.CONTAINER_RESERVED;
     } else {
       if (LOG.isDebugEnabled()) {
@@ -806,7 +840,7 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
     // Note that we have an assumption here that
     // there's only one container size per priority.
     if (Resources.fitsIn(node.getReservedContainer().getReservedResource(),
-        node.getAvailableResource())) {
+        node.getUnallocatedResource())) {
       assignContainer(node, true);
     }
     return true;
@@ -856,7 +890,12 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
   public Resource getResourceUsage() {
     // Here the getPreemptedResources() always return zero, except in
     // a preemption round
-    return Resources.subtract(getCurrentConsumption(), getPreemptedResources());
+    // In the common case where preempted resource is zero, return the
+    // current consumption Resource object directly without calling
+    // Resources.subtract which creates a new Resource object for each call.
+    return getPreemptedResources().equals(Resources.none()) ?
+        getCurrentConsumption() :
+        Resources.subtract(getCurrentConsumption(), getPreemptedResources());
   }
 
   @Override
@@ -890,7 +929,8 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
     // Add up outstanding resource requests
     synchronized (this) {
       for (Priority p : getPriorities()) {
-        for (ResourceRequest r : getResourceRequests(p).values()) {
+        ResourceRequest r = getResourceRequest(p, ResourceRequest.ANY);
+        if (r != null) {
           Resources.multiplyAndAddTo(demand,
               r.getCapability(), r.getNumContainers());
         }

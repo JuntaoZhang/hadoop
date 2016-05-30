@@ -55,7 +55,8 @@ public class IOUtils {
    * @param close whether or not close the InputStream and 
    * OutputStream at the end. The streams are closed in the finally clause.  
    */
-  public static void copyBytes(InputStream in, OutputStream out, int buffSize, boolean close) 
+  public static void copyBytes(InputStream in, OutputStream out,
+                               int buffSize, boolean close)
     throws IOException {
     try {
       copyBytes(in, out, buffSize);
@@ -194,7 +195,7 @@ public class IOUtils {
    * @throws IOException if it could not read requested number of bytes 
    * for any reason (including EOF)
    */
-  public static void readFully(InputStream in, byte buf[],
+  public static void readFully(InputStream in, byte[] buf,
       int off, int len) throws IOException {
     int toRead = len;
     while (toRead > 0) {
@@ -233,7 +234,7 @@ public class IOUtils {
   }
   
   /**
-   * Close the Closeable objects and <b>ignore</b> any {@link IOException} or 
+   * Close the Closeable objects and <b>ignore</b> any {@link Throwable} or
    * null pointers. Must only be used for cleanup in exception handlers.
    *
    * @param log the log to record problems to at debug level. Can be null.
@@ -254,13 +255,15 @@ public class IOUtils {
   }
 
   /**
-   * Closes the stream ignoring {@link IOException}.
+   * Closes the stream ignoring {@link Throwable}.
    * Must only be called in cleaning up from exception handlers.
    *
    * @param stream the Stream to close
    */
   public static void closeStream(java.io.Closeable stream) {
-    cleanup(null, stream);
+    if (stream != null) {
+      cleanup(null, stream);
+    }
   }
   
   /**

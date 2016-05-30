@@ -39,7 +39,8 @@ import org.apache.hadoop.security.Credentials;
 
 import com.google.common.annotations.VisibleForTesting;
 
-import java.io.*;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
 
@@ -165,9 +166,9 @@ public class SimpleCopyListing extends CopyListing {
     }
   }
 
-  /** {@inheritDoc} */
   @Override
-  public void doBuildListing(Path pathToListingFile, DistCpOptions options) throws IOException {
+  protected void doBuildListing(Path pathToListingFile,
+                                DistCpOptions options) throws IOException {
     if(options.shouldUseDiff()) {
       doBuildListingWithSnapshotDiff(getWriter(pathToListingFile), options);
     }else {
@@ -190,7 +191,7 @@ public class SimpleCopyListing extends CopyListing {
       authority = fs.getUri().getAuthority();
     }
 
-    return new Path(scheme, authority, path.toUri().getPath());
+    return new Path(scheme, authority, makeQualified(path).toUri().getPath());
   }
 
   /**
@@ -227,8 +228,9 @@ public class SimpleCopyListing extends CopyListing {
    * @throws IOException
    */
   @VisibleForTesting
-  public void doBuildListingWithSnapshotDiff(SequenceFile.Writer fileListWriter,
-      DistCpOptions options) throws IOException {
+  protected void doBuildListingWithSnapshotDiff(
+      SequenceFile.Writer fileListWriter, DistCpOptions options)
+      throws IOException {
     ArrayList<DiffInfo> diffList = distCpSync.prepareDiffList();
     Path sourceRoot = options.getSourcePaths().get(0);
     FileSystem sourceFS = sourceRoot.getFileSystem(getConf());
@@ -287,7 +289,7 @@ public class SimpleCopyListing extends CopyListing {
    * @throws IOException
    */
   @VisibleForTesting
-  public void doBuildListing(SequenceFile.Writer fileListWriter,
+  protected void doBuildListing(SequenceFile.Writer fileListWriter,
       DistCpOptions options) throws IOException {
     if (options.getNumListstatusThreads() > 0) {
       numListstatusThreads = options.getNumListstatusThreads();
@@ -367,8 +369,12 @@ public class SimpleCopyListing extends CopyListing {
       boolean specialHandling = (options.getSourcePaths().size() == 1 && !targetPathExists) ||
           options.shouldSyncFolder() || options.shouldOverwrite();
 
-      return specialHandling && sourceStatus.isDirectory() ? sourceStatus.getPath() :
-          sourceStatus.getPath().getParent();
+      if ((specialHandling && sourceStatus.isDirectory()) ||
+          sourceStatus.getPath().isRoot()) {
+        return sourceStatus.getPath();
+      } else {
+        return sourceStatus.getPath().getParent();
+      }
     }
   }
 

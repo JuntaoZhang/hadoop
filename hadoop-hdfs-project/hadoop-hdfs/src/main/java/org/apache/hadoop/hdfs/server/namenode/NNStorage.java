@@ -482,8 +482,24 @@ public class NNStorage extends Storage implements Closeable,
    * @param txid the txid that has been reached
    */
   public void writeTransactionIdFileToStorage(long txid) {
+    writeTransactionIdFileToStorage(txid, null);
+  }
+
+  /**
+   * Write a small file in all available storage directories that
+   * indicates that the namespace has reached some given transaction ID.
+   *
+   * This is used when the image is loaded to avoid accidental rollbacks
+   * in the case where an edit log is fully deleted but there is no
+   * checkpoint. See TestNameEditsConfigs.testNameEditsConfigsFailure()
+   * @param txid the txid that has been reached
+   * @param type the type of directory
+   */
+  public void writeTransactionIdFileToStorage(long txid,
+      NameNodeDirType type) {
     // Write txid marker in all storage directories
-    for (StorageDirectory sd : storageDirs) {
+    for (Iterator<StorageDirectory> it = dirIterator(type); it.hasNext();) {
+      StorageDirectory sd = it.next();
       try {
         writeTransactionIdFile(sd, txid);
       } catch(IOException e) {
@@ -1099,5 +1115,28 @@ public class NNStorage extends Storage implements Closeable,
     }
     nameDirSizeMap.clear();
     nameDirSizeMap.putAll(nnDirSizeMap);
+  }
+
+  /**
+   * Write all data storage files.
+   * @throws IOException When all the storage directory fails to write
+   * VERSION file
+   */
+  @Override
+  public void writeAll() throws IOException {
+    this.layoutVersion = getServiceLayoutVersion();
+    for (StorageDirectory sd : storageDirs) {
+      try {
+        writeProperties(sd);
+      } catch (Exception e) {
+        LOG.warn("Error during write properties to the VERSION file to " +
+            sd.toString(), e);
+        reportErrorsOnDirectory(sd);
+        if (storageDirs.isEmpty()) {
+          throw new IOException("All the storage failed while writing " +
+              "properties to VERSION file");
+        }
+      }
+    }
   }
 }

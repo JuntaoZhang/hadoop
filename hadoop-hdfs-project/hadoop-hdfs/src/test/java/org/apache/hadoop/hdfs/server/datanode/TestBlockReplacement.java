@@ -81,7 +81,6 @@ public class TestBlockReplacement {
     long bytesToSend = TOTAL_BYTES; 
     long start = Time.monotonicNow();
     DataTransferThrottler throttler = new DataTransferThrottler(bandwidthPerSec);
-    long totalBytes = 0L;
     long bytesSent = 1024*512L; // 0.5MB
     throttler.throttle(bytesSent);
     bytesToSend -= bytesSent;
@@ -93,7 +92,7 @@ public class TestBlockReplacement {
     } catch (InterruptedException ignored) {}
     throttler.throttle(bytesToSend);
     long end = Time.monotonicNow();
-    assertTrue(totalBytes*1000/(end-start)<=bandwidthPerSec);
+    assertTrue(TOTAL_BYTES * 1000 / (end - start) <= bandwidthPerSec);
   }
   
   @Test
@@ -198,9 +197,10 @@ public class TestBlockReplacement {
       LOG.info("Testcase 4: invalid del hint " + proxies.get(0) );
       assertTrue(replaceBlock(b, proxies.get(0), proxies.get(1), source));
       // after cluster has time to resolve the over-replication,
-      // block locations should contain two proxies,
-      // and either source or newNode, but not both.
-      checkBlocks(proxies.toArray(new DatanodeInfo[proxies.size()]), 
+      // block locations should contain any 3 of the blocks, since after the
+      // deletion the number of racks is still >=2 for sure.
+      // See HDFS-9314 for details, espacially the comment on 18/Nov/15 14:09.
+      checkBlocks(new DatanodeInfo[]{},
           fileName.toString(), 
           DEFAULT_BLOCK_SIZE, REPLICATION_FACTOR, client);
     } finally {
@@ -411,11 +411,19 @@ public class TestBlockReplacement {
           (DatanodeInfo)sourceDnDesc, (DatanodeInfo)sourceDnDesc,
           (DatanodeInfo)destDnDesc));
       // Waiting for the FsDatasetAsyncDsikService to delete the block
-      Thread.sleep(3000);
-      // Triggering the incremental block report to report the deleted block to
-      // namnemode
-      cluster.getDataNodes().get(0).triggerBlockReport(
-         new BlockReportOptions.Factory().setIncremental(true).build());
+      for (int tries = 0; tries < 20; tries++) {
+        Thread.sleep(1000);
+        // Triggering the deletion block report to report the deleted block
+        // to namnemode
+        DataNodeTestUtils.triggerDeletionReport(cluster.getDataNodes().get(0));
+        locatedBlocks =
+            client.getNamenode().getBlockLocations("/tmp.txt", 0, 10L)
+                .getLocatedBlocks();
+        // If block was deleted and only on 1 datanode then break out
+        if (locatedBlocks.get(0).getLocations().length == 1) {
+          break;
+        }
+      }
 
       cluster.transitionToStandby(0);
       cluster.transitionToActive(1);

@@ -92,6 +92,8 @@ message DatanodeInfoProto {
     NORMAL = 0;
     DECOMMISSION_INPROGRESS = 1;
     DECOMMISSIONED = 2;
+    ENTERING_MAINTENANCE = 3;
+    IN_MAINTENANCE = 4;
   }
 
   optional AdminState adminState = 10 [default = NORMAL];
@@ -136,6 +138,17 @@ message ContentSummaryProto {
   required uint64 spaceConsumed = 5;
   required uint64 spaceQuota = 6;
   optional StorageTypeQuotaInfosProto typeQuotaInfos = 7;
+}
+
+/**
+ * Summary of quota usage of a directory
+ */
+message QuotaUsageProto {
+  required uint64 fileAndDirectoryCount = 1;
+  required uint64 quota = 2;
+  required uint64 spaceConsumed = 3;
+  required uint64 spaceQuota = 4;
+  optional StorageTypeQuotaInfosProto typeQuotaInfos = 5;
 }
 
 /**
@@ -217,7 +230,7 @@ message LocatedBlockProto {
   repeated string storageIDs = 8;
 
   // striped block related fields
-  repeated uint32 blockIndex = 9; // used for striped block to indicate block index for each storage
+  optional bytes blockIndices = 9; // used for striped block to indicate block index for each storage
   repeated hadoop.common.TokenProto blockTokens = 10; // each internal block has a block token
 }
 
@@ -326,6 +339,7 @@ message ErasureCodingPolicyProto {
   required string name = 1;
   required ECSchemaProto schema = 2;
   required uint32 cellSize = 3;
+  required uint32 id = 4; // Actually a byte - only 8 bits used
 }
 
 /**

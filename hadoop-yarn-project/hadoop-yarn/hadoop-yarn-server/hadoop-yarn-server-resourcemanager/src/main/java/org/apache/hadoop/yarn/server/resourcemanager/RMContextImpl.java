@@ -43,6 +43,8 @@ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.AMLivelinessM
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.ContainerAllocationExpirer;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceScheduler;
+
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.distributed.QueueLimitCalculator;
 import org.apache.hadoop.yarn.server.resourcemanager.security.AMRMTokenSecretManager;
 import org.apache.hadoop.yarn.server.resourcemanager.security.ClientToAMTokenSecretManagerInRM;
 import org.apache.hadoop.yarn.server.resourcemanager.security.DelegationTokenRenewer;
@@ -72,6 +74,9 @@ public class RMContextImpl implements RMContext {
 
   private RMApplicationHistoryWriter rmApplicationHistoryWriter;
   private SystemMetricsPublisher systemMetricsPublisher;
+  private LeaderElectorService elector;
+
+  private QueueLimitCalculator queueLimitCalculator;
 
   /**
    * Default constructor. To be used in conjunction with setter methods for
@@ -131,6 +136,16 @@ public class RMContextImpl implements RMContext {
   @Override
   public Dispatcher getDispatcher() {
     return this.rmDispatcher;
+  }
+
+  @Override
+  public void setLeaderElectorService(LeaderElectorService elector) {
+    this.elector = elector;
+  }
+
+  @Override
+  public LeaderElectorService getLeaderElectorService() {
+    return this.elector;
   }
 
   @Override
@@ -460,5 +475,15 @@ public class RMContextImpl implements RMContext {
   @Override
   public void setQueuePlacementManager(PlacementManager placementMgr) {
     this.activeServiceContext.setQueuePlacementManager(placementMgr);
+  }
+
+  @Override
+  public QueueLimitCalculator getNodeManagerQueueLimitCalculator() {
+    return this.queueLimitCalculator;
+  }
+
+  public void setContainerQueueLimitCalculator(
+      QueueLimitCalculator limitCalculator) {
+    this.queueLimitCalculator = limitCalculator;
   }
 }

@@ -33,6 +33,7 @@ import javax.ws.rs.QueryParam;
 import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import javax.ws.rs.core.Response.ResponseBuilder;
 import javax.ws.rs.core.Response.Status;
 import javax.ws.rs.core.StreamingOutput;
 import javax.ws.rs.core.UriInfo;
@@ -58,6 +59,7 @@ import org.apache.hadoop.yarn.util.ConverterUtils;
 import org.apache.hadoop.yarn.webapp.BadRequestException;
 import org.apache.hadoop.yarn.webapp.NotFoundException;
 import org.apache.hadoop.yarn.webapp.WebApp;
+import org.apache.hadoop.yarn.webapp.util.WebAppUtils;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -143,10 +145,7 @@ public class NMWebServices {
   @Produces({ MediaType.APPLICATION_JSON, MediaType.APPLICATION_XML })
   public AppInfo getNodeApp(@PathParam("appid") String appId) {
     init();
-    ApplicationId id = ConverterUtils.toApplicationId(recordFactory, appId);
-    if (id == null) {
-      throw new NotFoundException("app with id " + appId + " not found");
-    }
+    ApplicationId id = WebAppUtils.parseApplicationId(recordFactory, appId);
     Application app = this.nmContext.getApplications().get(id);
     if (app == null) {
       throw new NotFoundException("app with id " + appId + " not found");
@@ -217,7 +216,8 @@ public class NMWebServices {
   @Public
   @Unstable
   public Response getLogs(@PathParam("containerid") String containerIdStr,
-      @PathParam("filename") String filename) {
+      @PathParam("filename") String filename,
+      @QueryParam("download") String download) {
     ContainerId containerId;
     try {
       containerId = ConverterUtils.toContainerId(containerIdStr);
@@ -234,7 +234,7 @@ public class NMWebServices {
     } catch (YarnException ex) {
       return Response.serverError().entity(ex.getMessage()).build();
     }
-    
+    boolean downloadFile = parseBooleanParam(download);
     try {
       final FileInputStream fis = ContainerLogsUtils.openLogFileForRead(
           containerIdStr, logFile, nmContext);
@@ -252,10 +252,20 @@ public class NMWebServices {
           os.flush();
         }
       };
-      
-      return Response.ok(stream).build();
+      ResponseBuilder resp = Response.ok(stream);
+      if (downloadFile) {
+        resp.header("Content-Type", "application/octet-stream");
+      }
+      return resp.build();
     } catch (IOException ex) {
       return Response.serverError().entity(ex.getMessage()).build();
     }
+  }
+
+  private boolean parseBooleanParam(String param) {
+    if (param != null) {
+      return ("true").equalsIgnoreCase(param);
+    }
+    return false;
   }
 }

@@ -49,6 +49,8 @@ public class TestYarnConfigurationFields extends TestConfigurationFieldsBase {
 
     // Specific properties to skip
     configurationPropsToSkipCompare
+        .add(YarnConfiguration.DEFAULT_FS_NODE_LABELS_STORE_IMPL_CLASS);
+    configurationPropsToSkipCompare
         .add(YarnConfiguration.DEFAULT_RM_CONFIGURATION_PROVIDER_CLASS);
     configurationPropsToSkipCompare
         .add(YarnConfiguration.DEFAULT_CLIENT_FAILOVER_PROXY_PROVIDER);
@@ -88,6 +90,7 @@ public class TestYarnConfigurationFields extends TestConfigurationFieldsBase {
         .add(YarnConfiguration.DEFAULT_SHARED_CACHE_CHECKSUM_ALGO_IMPL);
     configurationPropsToSkipCompare
         .add(YarnConfiguration.DEFAULT_AMRM_PROXY_INTERCEPTOR_CLASS_PIPELINE);
+    configurationPropsToSkipCompare.add(YarnConfiguration.CURATOR_LEADER_ELECTOR);
 
     // Ignore all YARN Application Timeline Service (version 1) properties
     configurationPrefixToSkipCompare.add("yarn.timeline-service.");
@@ -106,6 +109,45 @@ public class TestYarnConfigurationFields extends TestConfigurationFieldsBase {
         .add(YarnConfiguration.NM_NETWORK_RESOURCE_OUTBOUND_BANDWIDTH_YARN_MBIT);
     configurationPrefixToSkipCompare
         .add(YarnConfiguration.NM_DISK_RESOURCE_ENABLED);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_MEMORY_RESOURCE_PREFIX);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_CPU_RESOURCE_ENABLED);
+
+    // Ignore Distributed Scheduling Related Configurations.
+    // Since it is still a "work in progress" feature
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.DIST_SCHEDULING_ENABLED);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.DIST_SCHEDULING_INCR_MEMORY);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.DIST_SCHEDULING_INCR_VCORES);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.DIST_SCHEDULING_MAX_MEMORY);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.DIST_SCHEDULING_MAX_VCORES);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.DIST_SCHEDULING_CONTAINER_TOKEN_EXPIRY_MS);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.DIST_SCHEDULING_MIN_MEMORY);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.DIST_SCHEDULING_MIN_VCORES);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.DIST_SCHEDULING_TOP_K);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_SORTING_NODES_INTERVAL_MS);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_LOAD_COMPARATOR);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_MAX_QUEUE_LENGTH);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_MIN_QUEUE_LENGTH);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_MAX_QUEUE_WAIT_TIME_MS);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_MIN_QUEUE_WAIT_TIME_MS);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_LIMIT_STDEV);
 
     // Set by container-executor.cfg
     configurationPrefixToSkipCompare.add(YarnConfiguration.NM_USER_HOME_DIR);

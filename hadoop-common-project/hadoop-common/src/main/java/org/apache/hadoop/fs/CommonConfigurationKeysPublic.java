@@ -111,7 +111,12 @@ public class CommonConfigurationKeysPublic {
   public static final String  FS_TRASH_INTERVAL_KEY = "fs.trash.interval";
   /** Default value for FS_TRASH_INTERVAL_KEY */
   public static final long    FS_TRASH_INTERVAL_DEFAULT = 0;
-
+  /** See <a href="{@docRoot}/../core-default.html">core-default.xml</a>. */
+  public static final String  FS_CLIENT_TOPOLOGY_RESOLUTION_ENABLED =
+      "fs.client.resolve.topology.enabled";
+  /** Default value for FS_CLIENT_TOPOLOGY_RESOLUTION_ENABLED. */
+  public static final boolean FS_CLIENT_TOPOLOGY_RESOLUTION_ENABLED_DEFAULT =
+      false;
   /** See <a href="{@docRoot}/../core-default.html">core-default.xml</a> */
   public static final String  IO_MAPFILE_BLOOM_SIZE_KEY =
     "io.mapfile.bloom.size";
@@ -311,6 +316,9 @@ public class CommonConfigurationKeysPublic {
   /** See <a href="{@docRoot}/../core-default.html">core-default.xml</a> */
   public static final String HADOOP_SECURITY_DNS_NAMESERVER_KEY =
     "hadoop.security.dns.nameserver";
+  /** See <a href="{@docRoot}/../core-default.html">core-default.xml</a> */
+  public static final String HADOOP_TOKEN_FILES =
+      "hadoop.token.files";
 
   /** See <a href="{@docRoot}/../core-default.html">core-default.xml</a> */
   public static final String HADOOP_KERBEROS_MIN_SECONDS_BEFORE_RELOGIN =
@@ -404,5 +412,11 @@ public class CommonConfigurationKeysPublic {
       "hadoop.shell.safely.delete.limit.num.files";
   public static final long HADOOP_SHELL_SAFELY_DELETE_LIMIT_NUM_FILES_DEFAULT =
       100;
+
+  /** See <a href="{@docRoot}/../core-default.html">core-default.xml</a> */
+  public static final String HADOOP_HTTP_LOGS_ENABLED =
+      "hadoop.http.logs.enabled";
+  /** Defalt value for HADOOP_HTTP_LOGS_ENABLED */
+  public static final boolean HADOOP_HTTP_LOGS_ENABLED_DEFAULT = true;
 }
 

@@ -52,9 +52,11 @@ public class TestOpenFilesWithSnapshot {
   public void teardown() throws IOException {
     if (fs != null) {
       fs.close();
+      fs = null;
     }
     if (cluster != null) {
       cluster.shutdown();
+      cluster = null;
     }
 
   }
@@ -196,7 +198,7 @@ public class TestOpenFilesWithSnapshot {
     String clientName = fs.getClient().getClientName();
     // create one empty block
     nameNodeRpc.addBlock(fileWithEmptyBlock.toString(), clientName, null, null,
-        HdfsConstants.GRANDFATHER_INODE_ID, null);
+        HdfsConstants.GRANDFATHER_INODE_ID, null, null);
     fs.createSnapshot(path, "s2");
 
     fs.rename(new Path("/test/test"), new Path("/test/test-renamed"));
